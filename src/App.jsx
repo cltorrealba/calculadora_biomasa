@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Beaker, Calculator, Microscope, RotateCcw, Droplets, FlaskConical, ChevronDown, ChevronUp, Save, Settings2, Grid3x3, List } from 'lucide-react';
+import { Beaker, Calculator, Microscope, RotateCcw, Droplets, FlaskConical, ChevronDown, ChevronUp, Save, Settings2, Grid3x3, List, Clock, Trash2, ClipboardList, Search, CheckCircle, AlertCircle } from 'lucide-react';
 
 // --- Componentes UI Extraidos ---
 
@@ -115,6 +115,28 @@ const CountingModal = ({ activeCell, counts, updateCount, handleDirectInput, onC
 const App = () => {
   // --- Estados ---
   
+  // Modal de confirmacion
+  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', onConfirm: null });
+  
+  // Identificador de muestra
+  const [sampleId, setSampleId] = useState('');
+  
+  // Pestanas (Tabs)
+  const [activeTab, setActiveTab] = useState('counter'); // 'counter' o 'history'
+  
+  // Estado para busqueda en historial
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // Estado visual del boton de guardado ('idle', 'error', 'saved')
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // Historial
+  const [history, setHistory] = useState(() => {
+    const saved = localStorage.getItem('yeastHistory');
+    return saved ? JSON.parse(saved) : [];
+  });
+
   // Configuracion de Dilucion (Volumenes en mL)
   const [volumes, setVolumes] = useState({
     sample: 1,      // Volumen de muestra inicial
@@ -146,6 +168,11 @@ const App = () => {
   
   // Estado para colapsar seccion de dilucion
   const [showDilution, setShowDilution] = useState(true);
+
+  // Guardar historial en localStorage
+  useEffect(() => {
+    localStorage.setItem('yeastHistory', JSON.stringify(history));
+  }, [history]);
 
   // --- Calculos ---
 
@@ -210,6 +237,16 @@ const App = () => {
     };
   }, [totals, dilutionFactor, countingMode]);
 
+  // Historial Filtrado
+  const filteredHistory = useMemo(() => {
+    if (!searchTerm) return history;
+    const lowerSearch = searchTerm.toLowerCase();
+    return history.filter(record => 
+      record.sampleId.toLowerCase().includes(lowerSearch) || 
+      record.timestamp.toLowerCase().includes(lowerSearch)
+    );
+  }, [history, searchTerm]);
+
   // --- Manejadores ---
 
   const handleVolumeChange = (field, value) => {
@@ -218,11 +255,9 @@ const App = () => {
 
   const applyPreset = (type) => {
     if (type === 'cuba') {
-      // Dilucion 1:10 base + Tincion
       setVolumes(prev => ({ ...prev, sample: 1, water: 9, aliquot: 1, stain: 1 }));
-      setCountingMode(5); // Por defecto cubas suele ser 5 si hay muchas
+      setCountingMode(5);
     } else if (type === 'fermentador') {
-      // Dilucion 1:40 base + Tincion
       setVolumes(prev => ({ ...prev, sample: 1, water: 39, aliquot: 1, stain: 1 }));
       setCountingMode(5);
     }
@@ -266,21 +301,110 @@ const App = () => {
     }));
   };
 
-  const resetAll = () => {
-    if (window.confirm("Borrar todos los conteos?")) {
-      setCounts({
-        tl: { live: 0, dead: 0 },
-        tr: { live: 0, dead: 0 },
-        c:  { live: 0, dead: 0 },
-        bl: { live: 0, dead: 0 },
-        br: { live: 0, dead: 0 },
+  // Funcion silenciosa para limpiar el formulario despues de guardar
+  const clearForm = () => {
+    setCounts({
+      tl: { live: 0, dead: 0 },
+      tr: { live: 0, dead: 0 },
+      c:  { live: 0, dead: 0 },
+      bl: { live: 0, dead: 0 },
+      br: { live: 0, dead: 0 },
+    });
+    setGlobalCounts({ live: 0, dead: 0 });
+    setSampleId('');
+    setVolumes({ sample: 1, water: 9, aliquot: 1, stain: 1 });
+    setCountingMode(5);
+    setActiveCell(null);
+  };
+
+  // Funcion atada al boton superior "Nueva Muestra"
+  const handleNewSample = () => {
+    const hasPartialData = sampleId.trim() !== '' || totals.all > 0;
+    if (hasPartialData) {
+      setConfirmDialog({
+        isOpen: true,
+        message: "�Hay datos sin guardar. Deseas reiniciar el formulario y perder los datos actuales?",
+        onConfirm: () => clearForm()
       });
-      setGlobalCounts({ live: 0, dead: 0 });
+      return;
     }
+    clearForm();
+  };
+
+  const saveToHistory = () => {
+    // Validacion de Identificador
+    if (!sampleId.trim()) {
+      setErrorMessage('Falta Identificador');
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus('idle'), 2500);
+      return;
+    }
+    
+    // Validacion de volumenes requeridos (evitar divisiones por 0 y calculos erroneos)
+    if (!volumes.sample || volumes.sample <= 0 || !volumes.aliquot || volumes.aliquot <= 0) {
+      setErrorMessage('Revisa Volumenes');
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus('idle'), 2500);
+      return;
+    }
+
+    const newRecord = {
+      id: Date.now(),
+      timestamp: new Date().toLocaleString(),
+      sampleId,
+      mode: countingMode,
+      volumes: { ...volumes },
+      totals: { ...totals },
+      results: { ...results },
+      dilutionFactor
+    };
+
+    setHistory([newRecord, ...history]);
+    
+    // Feedback visual
+    setSaveStatus('saved');
+    setTimeout(() => {
+      setSaveStatus('idle');
+      clearForm(); // Limpiamos automaticamente para la siguiente muestra
+    }, 2000);
+  };
+
+  const deleteRecord = (id) => {
+    setConfirmDialog({
+      isOpen: true,
+      message: "�Eliminar este registro permanentemente?",
+      onConfirm: () => setHistory(prev => prev.filter(record => record.id !== id))
+    });
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans pb-20">
+    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans pb-24">
+      {/* Modal de Confirmacion Customizado */}
+      {confirmDialog.isOpen && (
+        <div className="fixed inset-0 z-[60] bg-slate-950/80 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl w-full max-w-sm shadow-2xl">
+            <p className="text-white mb-6 text-center font-medium">{confirmDialog.message}</p>
+            <div className="flex gap-4">
+              <button 
+                onClick={() => setConfirmDialog({ isOpen: false, message: '', onConfirm: null })} 
+                className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={() => { 
+                  if (confirmDialog.onConfirm) confirmDialog.onConfirm(); 
+                  setConfirmDialog({ isOpen: false, message: '', onConfirm: null }); 
+                }} 
+                className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-bold"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <CountingModal 
         activeCell={activeCell}
         counts={counts}
@@ -289,258 +413,404 @@ const App = () => {
         onClose={() => setActiveCell(null)}
       />
 
-      {/* Header */}
-      <header className="bg-indigo-900 p-4 shadow-lg sticky top-0 z-10 flex justify-between items-center">
-        <div className="flex items-center gap-2">
-          <Microscope className="text-white h-6 w-6" />
-          <h1 className="text-lg font-bold text-white">Lab Bodega</h1>
+      {/* Header Actualizado */}
+      <header className="bg-indigo-900 shadow-lg sticky top-0 z-10 p-3">
+        <div className="flex justify-between items-center max-w-md mx-auto">
+          <div className="flex items-center gap-3">
+            <div className="bg-white/10 p-1.5 rounded-lg flex items-center justify-center shrink-0">
+              <img 
+                src="Logo CII-05.png" 
+                alt="CII Logo" 
+                className="h-8 object-contain"
+              />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-sm font-bold text-white leading-tight">Laboratorio de Microbiologia</h1>
+              <span className="text-[10px] text-indigo-200 font-medium leading-tight max-w-[200px]">By Centro de Investigaci�n e Innovaci�n Vi�a Concha y Toro</span>
+            </div>
+          </div>
+          
+          {activeTab === 'counter' && (
+            <button onClick={handleNewSample} className="text-[11px] bg-indigo-800 px-3 py-1.5 rounded-md text-indigo-100 hover:text-white hover:bg-indigo-700 transition-colors shadow-sm font-bold shrink-0">
+              Nueva<br/>Muestra
+            </button>
+          )}
         </div>
-        <button onClick={resetAll} className="text-xs bg-indigo-800 px-3 py-1 rounded text-indigo-200 hover:text-white">
-          Nueva Muestra
-        </button>
       </header>
 
       <main className="p-4 max-w-md mx-auto space-y-6">
         
-        {/* Seccion 1: Calculadora de Dilucion */}
-        <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
-          <div 
-            className="p-3 bg-slate-800/50 flex justify-between items-center cursor-pointer"
-            onClick={() => setShowDilution(!showDilution)}
-          >
-            <div className="flex items-center gap-2 text-indigo-300">
-              <FlaskConical size={18} />
-              <span className="font-semibold text-sm">Preparacion de Muestra</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs bg-slate-700 px-2 py-0.5 rounded text-white font-mono">
-                FD: {dilutionFactor.toFixed(1)}x
-              </span>
-              {showDilution ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </div>
-          </div>
-          
-          {showDilution && (
-            <div className="p-4 space-y-4">
-              {/* Presets Rapidos */}
-              <div>
-                <label className="text-xs font-bold uppercase text-slate-500 mb-2 block">Cargar Protocolo</label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button 
-                    onClick={() => applyPreset('cuba')}
-                    className="py-2 px-3 bg-indigo-600/20 border border-indigo-500/50 rounded-lg text-indigo-300 text-sm font-medium hover:bg-indigo-600 hover:text-white transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Settings2 size={14} />
-                    Cuba (1:10)
-                  </button>
-                  <button 
-                    onClick={() => applyPreset('fermentador')}
-                    className="py-2 px-3 bg-purple-600/20 border border-purple-500/50 rounded-lg text-purple-300 text-sm font-medium hover:bg-purple-600 hover:text-white transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Settings2 size={14} />
-                    Ferm. (1:40)
-                  </button>
-                </div>
-              </div>
+        {/* VISTA DEL CONTADOR */}
+        {activeTab === 'counter' && (
+          <>
+            {/* Identificador de Muestra */}
+            <section className="bg-slate-900 rounded-xl border border-slate-800 p-3 shadow-sm">
+              <label className="text-xs font-bold uppercase text-slate-500 mb-1 block flex justify-between items-center">
+                <span>Identificador de Muestra</span>
+                {saveStatus === 'error' && errorMessage === 'Falta Identificador' && <span className="text-red-400 text-[10px] flex items-center gap-1"><AlertCircle size={12}/> Campo Obligatorio</span>}
+              </label>
+              <input 
+                type="text" 
+                value={sampleId}
+                onChange={(e) => setSampleId(e.target.value)}
+                placeholder="Ej: Cuba 4, Lote A, Barrica 12..."
+                className={`w-full bg-slate-950 border ${saveStatus === 'error' ? 'border-red-500/50' : 'border-slate-700'} rounded p-2 text-white focus:border-indigo-500 outline-none transition-colors`}
+              />
+            </section>
 
-              {/* Paso 1: Dilucion con Agua */}
-              <div className="space-y-2 border-t border-slate-800 pt-3">
-                <label className="text-xs font-bold uppercase text-slate-500">1. Dilucion Inicial</label>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <span className="text-xs text-slate-400 block mb-1">Muestra (mL)</span>
-                    <input 
-                      type="number" 
-                      step="0.1"
-                      value={volumes.sample}
-                      onChange={(e) => handleVolumeChange('sample', e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <span className="text-xs text-slate-400 block mb-1">Agua (mL)</span>
-                    <input 
-                      type="number" 
-                      step="0.1"
-                      value={volumes.water}
-                      onChange={(e) => handleVolumeChange('water', e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Paso 2: Tincion */}
-              <div className="space-y-2 pt-2 border-t border-slate-800">
-                <div className="flex justify-between">
-                  <label className="text-xs font-bold uppercase text-slate-500">2. Tincion ("Extrapolacion x2")</label>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <span className="text-xs text-slate-400 block mb-1">Alicuota (mL)</span>
-                    <input 
-                      type="number" 
-                      step="0.1"
-                      value={volumes.aliquot}
-                      onChange={(e) => handleVolumeChange('aliquot', e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <span className="text-xs text-slate-400 block mb-1">Azul (mL)</span>
-                    <input 
-                      type="number" 
-                      step="0.1"
-                      value={volumes.stain}
-                      onChange={(e) => handleVolumeChange('stain', e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* Seccion 2: Conteo y Modo */}
-        <section>
-          <div className="flex justify-between items-end mb-4 bg-slate-900 p-2 rounded-lg border border-slate-800">
-            {/* Toggle Mode */}
-            <div className="flex bg-slate-950 p-1 rounded-lg">
-              <button 
-                onClick={() => setCountingMode(5)}
-                className={`px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${countingMode === 5 ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
+            {/* Seccion 1: Calculadora de Dilucion */}
+            <section className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-sm">
+              <div 
+                className="p-3 bg-slate-800/50 flex justify-between items-center cursor-pointer"
+                onClick={() => setShowDilution(!showDilution)}
               >
-                <Grid3x3 size={14} />
-                5 Cuadros
-              </button>
-              <button 
-                onClick={() => setCountingMode(13)}
-                className={`px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${countingMode === 13 ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                <List size={14} />
-                13 Cuadros
-              </button>
-            </div>
-            
-            <div className="text-xs text-slate-500 px-2">
-              Total: <span className="text-white font-bold">{totals.all}</span>
-            </div>
-          </div>
-
-          {/* VISTA 5 CUADROS: GRID VISUAL */}
-          {countingMode === 5 && (
-            <>
-              <div className="aspect-square w-full bg-slate-900 rounded-xl border-4 border-slate-800 p-2 relative shadow-inner">
-                {/* Grid Lines Visual Effect */}
-                <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-10">
-                  <div className="border-r border-b border-white"></div>
-                  <div className="border-r border-b border-white"></div>
-                  <div className="border-b border-white"></div>
-                  <div className="border-r border-b border-white"></div>
-                  <div className="border-r border-b border-white"></div>
-                  <div className="border-b border-white"></div>
-                  <div className="border-r border-white"></div>
-                  <div className="border-r border-white"></div>
-                  <div></div>
+                <div className="flex items-center gap-2 text-indigo-300">
+                  <FlaskConical size={18} />
+                  <span className="font-semibold text-sm">Preparacion de Muestra</span>
                 </div>
-
-                {/* Interactive Grid 3x3 */}
-                <div className="grid grid-cols-3 grid-rows-3 gap-2 h-full relative z-0">
-                  {/* Row 1 */}
-                  <GridCell active={true} label="TL" data={counts.tl} onClick={() => setActiveCell({key: 'tl', label: 'Superior Izquierda'})} />
-                  <GridCell active={false} />
-                  <GridCell active={true} label="TR" data={counts.tr} onClick={() => setActiveCell({key: 'tr', label: 'Superior Derecha'})} />
-                  
-                  {/* Row 2 */}
-                  <GridCell active={false} />
-                  <GridCell active={true} label="Centro" data={counts.c} onClick={() => setActiveCell({key: 'c', label: 'Central'})} />
-                  <GridCell active={false} />
-
-                  {/* Row 3 */}
-                  <GridCell active={true} label="BL" data={counts.bl} onClick={() => setActiveCell({key: 'bl', label: 'Inferior Izquierda'})} />
-                  <GridCell active={false} />
-                  <GridCell active={true} label="BR" data={counts.br} onClick={() => setActiveCell({key: 'br', label: 'Inferior Derecha'})} />
+                <div className="flex items-center gap-2">
+                  <span className="text-xs bg-slate-700 px-2 py-0.5 rounded text-white font-mono">
+                    FD: {dilutionFactor.toFixed(1)}x
+                  </span>
+                  {showDilution ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 </div>
-              </div>
-              <p className="text-center text-xs text-slate-500 mt-2">Esquema en Z para alta densidad (5 cuadros)</p>
-            </>
-          )}
-
-          {/* VISTA 13 CUADROS: INPUT MANUAL */}
-          {countingMode === 13 && (
-            <div className="bg-slate-900 rounded-xl border border-slate-800 p-6 space-y-6">
-              <div className="text-center">
-                <span className="text-xs font-bold text-slate-500 uppercase">Modo Baja Densidad</span>
-                <p className="text-sm text-slate-300 mt-1">Ingresa el total sumado de los 13 cuadros</p>
               </div>
               
-              <div className="space-y-4">
-                <div className="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-green-900/30">
-                  <span className="text-green-400 font-bold text-lg">Vivas</span>
-                  <input 
-                    type="number" 
-                    placeholder="0"
-                    value={globalCounts.live || ''}
-                    onChange={(e) => handleGlobalInput('live', e.target.value)}
-                    className="bg-transparent text-right text-4xl font-mono text-white font-bold outline-none w-32 border-b border-slate-800 focus:border-green-500"
-                  />
-                </div>
+              {showDilution && (
+                <div className="p-4 space-y-4">
+                  {/* Presets Rapidos */}
+                  <div>
+                    <label className="text-xs font-bold uppercase text-slate-500 mb-2 block">Cargar Protocolo</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button 
+                        onClick={() => applyPreset('cuba')}
+                        className="py-2 px-3 bg-indigo-600/20 border border-indigo-500/50 rounded-lg text-indigo-300 text-sm font-medium hover:bg-indigo-600 hover:text-white transition-colors flex items-center justify-center gap-2 shadow-sm"
+                      >
+                        <Settings2 size={14} />
+                        Cuba (1:10)
+                      </button>
+                      <button 
+                        onClick={() => applyPreset('fermentador')}
+                        className="py-2 px-3 bg-purple-600/20 border border-purple-500/50 rounded-lg text-purple-300 text-sm font-medium hover:bg-purple-600 hover:text-white transition-colors flex items-center justify-center gap-2 shadow-sm"
+                      >
+                        <Settings2 size={14} />
+                        Ferm. (1:40)
+                      </button>
+                    </div>
+                  </div>
 
-                <div className="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-red-900/30">
-                  <span className="text-red-400 font-bold text-lg">Muertas</span>
-                  <input 
-                    type="number" 
-                    placeholder="0"
-                    value={globalCounts.dead || ''}
-                    onChange={(e) => handleGlobalInput('dead', e.target.value)}
-                    className="bg-transparent text-right text-4xl font-mono text-white font-bold outline-none w-32 border-b border-slate-800 focus:border-red-500"
-                  />
+                  {/* Paso 1: Dilucion con Agua */}
+                  <div className="space-y-2 border-t border-slate-800 pt-3">
+                    <label className="text-xs font-bold uppercase text-slate-500">1. Dilucion Inicial</label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-xs text-slate-400 block mb-1">Muestra (mL)</span>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          value={volumes.sample}
+                          onChange={(e) => handleVolumeChange('sample', e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-xs text-slate-400 block mb-1">Agua (mL)</span>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          value={volumes.water}
+                          onChange={(e) => handleVolumeChange('water', e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Paso 2: Tincion */}
+                  <div className="space-y-2 pt-2 border-t border-slate-800">
+                    <div className="flex justify-between">
+                      <label className="text-xs font-bold uppercase text-slate-500">2. Tincion ("Extrapolacion x2")</label>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-xs text-slate-400 block mb-1">Alicuota (mL)</span>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          value={volumes.aliquot}
+                          onChange={(e) => handleVolumeChange('aliquot', e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-xs text-slate-400 block mb-1">Azul (mL)</span>
+                        <input 
+                          type="number" 
+                          step="0.1"
+                          value={volumes.stain}
+                          onChange={(e) => handleVolumeChange('stain', e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Seccion 2: Conteo y Modo */}
+            <section>
+              <div className="flex justify-between items-end mb-4 bg-slate-900 p-2 rounded-lg border border-slate-800 shadow-sm">
+                {/* Toggle Mode */}
+                <div className="flex bg-slate-950 p-1 rounded-lg">
+                  <button 
+                    onClick={() => setCountingMode(5)}
+                    className={`px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${countingMode === 5 ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
+                  >
+                    <Grid3x3 size={14} />
+                    5 Cuadros
+                  </button>
+                  <button 
+                    onClick={() => setCountingMode(13)}
+                    className={`px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors ${countingMode === 13 ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}
+                  >
+                    <List size={14} />
+                    13 Cuadros
+                  </button>
+                </div>
+                
+                <div className="text-xs text-slate-500 px-2">
+                  Total: <span className="text-white font-bold">{totals.all}</span>
                 </div>
               </div>
+
+              {/* VISTA 5 CUADROS: GRID VISUAL */}
+              {countingMode === 5 && (
+                <>
+                  <div className="aspect-square w-full bg-slate-900 rounded-xl border-4 border-slate-800 p-2 relative shadow-inner">
+                    {/* Grid Lines Visual Effect */}
+                    <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-10">
+                      <div className="border-r border-b border-white"></div>
+                      <div className="border-r border-b border-white"></div>
+                      <div className="border-b border-white"></div>
+                      <div className="border-r border-b border-white"></div>
+                      <div className="border-r border-b border-white"></div>
+                      <div className="border-b border-white"></div>
+                      <div className="border-r border-white"></div>
+                      <div className="border-r border-white"></div>
+                      <div></div>
+                    </div>
+
+                    {/* Interactive Grid 3x3 */}
+                    <div className="grid grid-cols-3 grid-rows-3 gap-2 h-full relative z-0">
+                      {/* Row 1 */}
+                      <GridCell active={true} label="TL" data={counts.tl} onClick={() => setActiveCell({key: 'tl', label: 'Superior Izquierda'})} />
+                      <GridCell active={false} />
+                      <GridCell active={true} label="TR" data={counts.tr} onClick={() => setActiveCell({key: 'tr', label: 'Superior Derecha'})} />
+                      
+                      {/* Row 2 */}
+                      <GridCell active={false} />
+                      <GridCell active={true} label="Centro" data={counts.c} onClick={() => setActiveCell({key: 'c', label: 'Central'})} />
+                      <GridCell active={false} />
+
+                      {/* Row 3 */}
+                      <GridCell active={true} label="BL" data={counts.bl} onClick={() => setActiveCell({key: 'bl', label: 'Inferior Izquierda'})} />
+                      <GridCell active={false} />
+                      <GridCell active={true} label="BR" data={counts.br} onClick={() => setActiveCell({key: 'br', label: 'Inferior Derecha'})} />
+                    </div>
+                  </div>
+                  <p className="text-center text-xs text-slate-500 mt-2">Esquema en Z para alta densidad (5 cuadros)</p>
+                </>
+              )}
+
+              {/* VISTA 13 CUADROS: INPUT MANUAL */}
+              {countingMode === 13 && (
+                <div className="bg-slate-900 rounded-xl border border-slate-800 p-6 space-y-6 shadow-sm">
+                  <div className="text-center">
+                    <span className="text-xs font-bold text-slate-500 uppercase">Modo Baja Densidad</span>
+                    <p className="text-sm text-slate-300 mt-1">Ingresa el total sumado de los 13 cuadros</p>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-green-900/30">
+                      <span className="text-green-400 font-bold text-lg">Vivas</span>
+                      <input 
+                        type="number" 
+                        placeholder="0"
+                        value={globalCounts.live || ''}
+                        onChange={(e) => handleGlobalInput('live', e.target.value)}
+                        className="bg-transparent text-right text-4xl font-mono text-white font-bold outline-none w-32 border-b border-slate-800 focus:border-green-500"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-red-900/30">
+                      <span className="text-red-400 font-bold text-lg">Muertas</span>
+                      <input 
+                        type="number" 
+                        placeholder="0"
+                        value={globalCounts.dead || ''}
+                        onChange={(e) => handleGlobalInput('dead', e.target.value)}
+                        className="bg-transparent text-right text-4xl font-mono text-white font-bold outline-none w-32 border-b border-slate-800 focus:border-red-500"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </section>
+
+            {/* Seccion 3: Resultados */}
+            <section className="bg-slate-900 rounded-xl border border-slate-800 p-4 space-y-4 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <Calculator className="text-indigo-400" size={18} />
+                <h2 className="font-bold text-white">Resultados</h2>
+              </div>
+
+              {/* Tarjeta Principal: Concentracion Total y Viabilidad */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-indigo-900/20 border border-indigo-500/30 rounded-lg p-3 text-center">
+                  <span className="text-xs text-indigo-300 block mb-1">Conc. Total</span>
+                  <span className="text-2xl font-bold text-white block">{results.concTotal}</span>
+                  <span className="text-[10px] text-indigo-400">millones celulas/mL</span>
+                </div>
+                <div className={`border rounded-lg p-3 text-center ${parseFloat(results.viability) > 80 ? 'bg-green-900/20 border-green-500/30' : 'bg-orange-900/20 border-orange-500/30'}`}>
+                  <span className={`text-xs block mb-1 ${parseFloat(results.viability) > 80 ? 'text-green-300' : 'text-orange-300'}`}>Viabilidad</span>
+                  <span className="text-2xl font-bold text-white block">{results.viability}%</span>
+                  <span className="text-[10px] opacity-70">celulas vivas</span>
+                </div>
+              </div>
+
+              {/* Detalles Vivas/Muertas */}
+              <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-800">
+                <div className="flex flex-col">
+                  <span className="text-xs text-green-400 font-bold">Vivas</span>
+                  <span className="text-lg font-mono text-white">{results.concLive} <span className="text-[10px] text-slate-500">M/mL</span></span>
+                </div>
+                <div className="flex flex-col text-right">
+                  <span className="text-xs text-red-400 font-bold">Muertas</span>
+                  <span className="text-lg font-mono text-white">{results.concDead} <span className="text-[10px] text-slate-500">M/mL</span></span>
+                </div>
+              </div>
+              <div className="text-[10px] text-slate-600 text-center font-mono">
+                 Formula: (N / {countingMode}) � 25 � 10t � {dilutionFactor.toFixed(1)}
+              </div>
+
+              {/* Boton Guardar Mejorado */}
+              <button 
+                onClick={saveToHistory}
+                disabled={saveStatus === 'saved'}
+                className={`w-full mt-4 py-3 rounded-lg font-bold flex items-center justify-center gap-2 shadow-lg transition-all duration-300 ${
+                  saveStatus === 'saved' 
+                    ? 'bg-green-600 text-white' 
+                    : saveStatus === 'error'
+                      ? 'bg-red-600 text-white'
+                      : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+                }`}
+              >
+                {saveStatus === 'saved' ? (
+                  <><CheckCircle size={20} className="animate-pulse" /> Guardado Exitosamente!</>
+                ) : saveStatus === 'error' ? (
+                  <><AlertCircle size={20} /> {errorMessage}</>
+                ) : (
+                  <><Save size={20} /> Guardar en Historial</>
+                )}
+              </button>
+            </section>
+          </>
+        )}
+
+        {/* VISTA DEL HISTORIAL */}
+        {activeTab === 'history' && (
+          <div className="space-y-4">
+            
+            {/* Buscador */}
+            <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 shadow-sm flex items-center gap-2">
+              <Search className="text-slate-500" size={18} />
+              <input 
+                type="text" 
+                placeholder="Buscar por ID o Fecha..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="bg-transparent w-full text-white text-sm outline-none placeholder-slate-600"
+              />
+              {searchTerm && (
+                <button onClick={() => setSearchTerm('')} className="text-slate-500 hover:text-white">
+                  &times;
+                </button>
+              )}
             </div>
-          )}
-
-        </section>
-
-        {/* Seccion 3: Resultados */}
-        <section className="bg-slate-900 rounded-xl border border-slate-800 p-4 space-y-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Calculator className="text-indigo-400" size={18} />
-            <h2 className="font-bold text-white">Resultados</h2>
+            
+            {history.length === 0 ? (
+              <div className="text-center p-8 bg-slate-900 rounded-xl border border-slate-800">
+                <ClipboardList className="mx-auto h-12 w-12 text-slate-600 mb-3" />
+                <p className="text-slate-400 text-sm">No hay registros en el historial.</p>
+              </div>
+            ) : filteredHistory.length === 0 ? (
+              <div className="text-center p-8 bg-slate-900 rounded-xl border border-slate-800">
+                <Search className="mx-auto h-8 w-8 text-slate-600 mb-3" />
+                <p className="text-slate-400 text-sm">No se encontraron resultados para "{searchTerm}".</p>
+              </div>
+            ) : (
+              filteredHistory.map((record) => (
+                <div key={record.id} className="bg-slate-900 rounded-xl border border-slate-800 p-4 space-y-3 relative group">
+                  <div className="flex justify-between items-start border-b border-slate-800 pb-2 pr-8">
+                    <div>
+                      <span className="text-lg font-bold text-white block">{record.sampleId}</span>
+                      <span className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+                        <Clock size={12} /> {record.timestamp}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-sm font-bold block ${parseFloat(record.results.viability) > 80 ? 'text-green-400' : 'text-orange-400'}`}>
+                        {record.results.viability}% Viab.
+                      </span>
+                      <span className="text-xs text-slate-400">FD: {record.dilutionFactor.toFixed(1)}x ({record.mode} c.)</span>
+                    </div>
+                  </div>
+                  
+                  {/* Boton Eliminar Individual */}
+                  <button 
+                    onClick={() => deleteRecord(record.id)}
+                    className="absolute top-4 right-4 text-slate-600 hover:text-red-400 p-1 transition-colors"
+                    title="Eliminar Registro"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                  
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="bg-slate-950 p-2 rounded border border-slate-800/50">
+                      <span className="text-[10px] text-slate-500 block uppercase">Conc. Total</span>
+                      <span className="font-mono text-indigo-300">{record.results.concTotal} M/mL</span>
+                    </div>
+                    <div className="bg-slate-950 p-2 rounded border border-slate-800/50">
+                      <span className="text-[10px] text-slate-500 block uppercase">Conteo Real</span>
+                      <span className="font-mono text-slate-300">V:{record.totals.live} | M:{record.totals.dead}</span>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-
-          {/* Tarjeta Principal: Concentracion Total y Viabilidad */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-indigo-900/20 border border-indigo-500/30 rounded-lg p-3 text-center">
-              <span className="text-xs text-indigo-300 block mb-1">Conc. Total</span>
-              <span className="text-2xl font-bold text-white block">{results.concTotal}</span>
-              <span className="text-[10px] text-indigo-400">millones celulas/mL</span>
-            </div>
-            <div className={`border rounded-lg p-3 text-center ${parseFloat(results.viability) > 80 ? 'bg-green-900/20 border-green-500/30' : 'bg-orange-900/20 border-orange-500/30'}`}>
-              <span className={`text-xs block mb-1 ${parseFloat(results.viability) > 80 ? 'text-green-300' : 'text-orange-300'}`}>Viabilidad</span>
-              <span className="text-2xl font-bold text-white block">{results.viability}%</span>
-              <span className="text-[10px] opacity-70">celulas vivas</span>
-            </div>
-          </div>
-
-          {/* Detalles Vivas/Muertas */}
-          <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-800">
-            <div className="flex flex-col">
-              <span className="text-xs text-green-400 font-bold">Vivas</span>
-              <span className="text-lg font-mono text-white">{results.concLive} <span className="text-[10px] text-slate-500">M/mL</span></span>
-            </div>
-            <div className="flex flex-col text-right">
-              <span className="text-xs text-red-400 font-bold">Muertas</span>
-              <span className="text-lg font-mono text-white">{results.concDead} <span className="text-[10px] text-slate-500">M/mL</span></span>
-            </div>
-          </div>
-          <div className="text-[10px] text-slate-600 text-center font-mono">
-             Formula: (N / {countingMode}) � 25 � 10t � {dilutionFactor.toFixed(1)}
-          </div>
-        </section>
-
+        )}
       </main>
+
+      {/* Bottom Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 flex p-2 pb-4 z-40">
+        <button 
+          onClick={() => setActiveTab('counter')}
+          className={`flex-1 flex flex-col items-center py-2 rounded-lg transition-colors ${activeTab === 'counter' ? 'text-indigo-400 bg-slate-800' : 'text-slate-500 hover:text-slate-400'}`}
+        >
+          <Calculator size={24} className="mb-1" />
+          <span className="text-[10px] font-bold uppercase">Contador</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('history')}
+          className={`flex-1 flex flex-col items-center py-2 rounded-lg transition-colors ${activeTab === 'history' ? 'text-indigo-400 bg-slate-800' : 'text-slate-500 hover:text-slate-400'}`}
+        >
+          <ClipboardList size={24} className="mb-1" />
+          <span className="text-[10px] font-bold uppercase">Historial</span>
+        </button>
+      </div>
     </div>
   );
 };
