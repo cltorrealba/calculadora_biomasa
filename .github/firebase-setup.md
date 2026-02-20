@@ -40,17 +40,24 @@ Si ves la interfaz de conteo de células sin errores en F12 → ¡Funciona!
 
 ## Configuración Adicional (Firestore Reglas)
 
-**Reglas Firestore (Security Rules):**
-Las reglas actuales permiten lectura/escritura solo a usuarios autenticados:
+**Reglas Firestore (Security Rules) - IMPORTANTE:**
+
+Las reglas permiten que todos los usuarios autenticados accedan al historial compartido:
 
 ```
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{userId}/sessions/{sessionId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    
+    // Colección de historial compartido - accesible para todos los usuarios autenticados
+    match /shared-history/{recordId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+      allow delete: if request.auth != null;
     }
-    match /users/{userId}/history/{historyDoc} {
+    
+    // Sesiones individuales por usuario (datos privados de sesión actual)
+    match /users/{userId}/sessions/{sessionId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
   }
@@ -62,6 +69,11 @@ service cloud.firestore {
 2. Reemplaza el contenido actual con las reglas arriba
 3. Haz clic en **Publicar**
 
+**Alternativamente, puedes desplegarlas desde la terminal:**
+```bash
+firebase deploy --only firestore:rules
+```
+
 ---
 
 ## Colecciones Firestore Esperadas
@@ -69,20 +81,29 @@ service cloud.firestore {
 Después de la primera sesión autenticada, se crearán automáticamente:
 
 ```
-users/
-  ├── {userId}/
-      ├── sessions/
-      │   └── current-session/
-      │       ├── sampleId
-      │       ├── volumes
-      │       ├── counts
-      │       ├── globalCounts
-      │       ├── countingMode
-      │       └── timestamp
-      └── history/
-          ├── {recordId1}/
-          ├── {recordId2}/
-          └── ...
+shared-history/           # Historial compartido entre todos los usuarios
+  ├── {timestamp1}/
+  │   ├── sampleId
+  │   ├── volumes
+  │   ├── totals
+  │   ├── results
+  │   ├── dilutionFactor
+  │   ├── mode
+  │   ├── timestamp
+  │   └── createdAt
+  └── {timestamp2}/
+      └── ...
+
+users/                    # Sesiones privadas por usuario
+  └── {userId}/
+      └── sessions/
+          └── current-session/
+              ├── sampleId
+              ├── volumes
+              ├── counts
+              ├── globalCounts
+              ├── countingMode
+              └── lastUpdated
 ```
 
 ---

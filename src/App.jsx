@@ -133,11 +133,8 @@ const App = () => {
   const [saveStatus, setSaveStatus] = useState('idle');
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Historial
-  const [history, setHistory] = useState(() => {
-    const saved = localStorage.getItem('yeastHistory');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Historial (cargado desde Firestore)
+  const [history, setHistory] = useState([]);
 
   // Configuracion de Dilucion (Volumenes en mL)
   const [volumes, setVolumes] = useState({
@@ -175,7 +172,7 @@ const App = () => {
   // --- Firestore ---
   const [userId, setUserId] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
-  const { saveSession, loadSession, addToHistory } = useFirestoreSync(userId);
+  const { saveSession, loadSession, addToHistory, subscribeToHistory, deleteFromHistory } = useFirestoreSync(userId);
 
   // Autenticar y cargar sesión al iniciar
   useEffect(() => {
@@ -207,6 +204,14 @@ const App = () => {
     return unsubscribe;
   }, []);
 
+  // Suscribirse al historial compartido en Firestore
+  useEffect(() => {
+    const unsubscribe = subscribeToHistory((firestoreHistory) => {
+      setHistory(firestoreHistory);
+    });
+    return unsubscribe;
+  }, [subscribeToHistory]);
+
   // Sincronizar cambios con Firestore en tiempo real
   useEffect(() => {
     if (!userId) return;
@@ -224,11 +229,6 @@ const App = () => {
     const timer = setTimeout(syncData, 1000);
     return () => clearTimeout(timer);
   }, [sampleId, volumes, countingMode, counts, globalCounts, userId, saveSession]);
-
-  // Guardar historial en localStorage
-  useEffect(() => {
-    localStorage.setItem('yeastHistory', JSON.stringify(history));
-  }, [history]);
 
   // --- Calculos ---
 
@@ -446,25 +446,34 @@ const App = () => {
       dilutionFactor
     };
 
-    setHistory([newRecord, ...history]);
-    
-    // Guardar en Firestore también
-    if (userId) {
-      addToHistory(newRecord);
-    }
-    
-    setSaveStatus('saved');
-    setTimeout(() => {
-      setSaveStatus('idle');
-      clearForm();
-    }, 2000);
+    // Guardar en Firestore (la actualización local se hace vía listener)
+    addToHistory(newRecord)
+      .then(() => {
+        setSaveStatus('saved');
+        setTimeout(() => {
+          setSaveStatus('idle');
+          clearForm();
+        }, 2000);
+      })
+      .catch((error) => {
+        console.error('Error guardando:', error);
+        setErrorMessage('Error al guardar en la nube');
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 2500);
+      });
   };
 
   const deleteRecord = (id) => {
     setConfirmDialog({
       isOpen: true,
       message: "Eliminar este registro permanentemente?",
-      onConfirm: () => setHistory(prev => prev.filter(record => record.id !== id)),
+      onConfirm: () => {
+        deleteFromHistory(id)
+          .catch(error => {
+            console.error('Error eliminando:', error);
+            alert('Error al eliminar el registro');
+          });
+      },
       isAlert: false
     });
   };
@@ -472,8 +481,17 @@ const App = () => {
   const clearHistory = () => {
     setConfirmDialog({
       isOpen: true,
-      message: "Estas seguro de borrar TODO el historial? Esta accion no se puede deshacer.",
-      onConfirm: () => setHistory([]),
+      message: "Estas seguro de borrar TODO el historial? Esta accion no se puede deshacer y afectara a todos los usuarios.",
+      onConfirm: async () => {
+        try {
+          // Eliminar todos los registros del historial
+          const deletePromises = history.map(record => deleteFromHistory(record.id));
+          await Promise.all(deletePromises);
+        } catch (error) {
+          console.error('Error limpiando historial:', error);
+          alert('Error al limpiar el historial');
+        }
+      },
       isAlert: false
     });
   };

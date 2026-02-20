@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { db } from '../firebase'
-import { doc, setDoc, getDoc, onSnapshot, collection, query, orderBy } from 'firebase/firestore'
+import { doc, setDoc, getDoc, onSnapshot, collection, query, orderBy, deleteDoc } from 'firebase/firestore'
 
 const SESSION_DOC = 'current-session'
-const HISTORY_COLLECTION = 'history'
+const GLOBAL_HISTORY_COLLECTION = 'shared-history' // Colección global compartida
 
 // Hook para sincronizar estado con Firestore
 export const useFirestoreSync = (userId) => {
@@ -34,26 +34,27 @@ export const useFirestoreSync = (userId) => {
     }
   }
 
+  // Guardar en colección global compartida
   const addToHistory = async (record) => {
     try {
-      if (!userId) return
-      const historyRef = doc(db, 'users', userId, 'history', Date.now().toString())
+      const historyRef = doc(db, GLOBAL_HISTORY_COLLECTION, record.id.toString())
       await setDoc(historyRef, {
         ...record,
-        timestamp: new Date().toISOString()
+        createdAt: new Date().toISOString()
       })
+      return true
     } catch (error) {
       console.error('Error agregando al historial:', error)
+      throw error
     }
   }
 
+  // Suscribirse a la colección global
   const subscribeToHistory = (callback) => {
-    if (!userId) return () => {}
-    const collectionRef = `users/${userId}/history`
-    const q = collection(db, collectionRef)
+    const q = query(collection(db, GLOBAL_HISTORY_COLLECTION), orderBy('createdAt', 'desc'))
     
     return onSnapshot(
-      query(q, orderBy('timestamp', 'desc')),
+      q,
       (snapshot) => {
         const history = snapshot.docs.map(doc => ({
           id: doc.id,
@@ -65,5 +66,16 @@ export const useFirestoreSync = (userId) => {
     )
   }
 
-  return { saveSession, loadSession, addToHistory, subscribeToHistory, setIsSynced }
+  // Eliminar registro del historial
+  const deleteFromHistory = async (recordId) => {
+    try {
+      await deleteDoc(doc(db, GLOBAL_HISTORY_COLLECTION, recordId.toString()))
+      return true
+    } catch (error) {
+      console.error('Error eliminando registro:', error)
+      throw error
+    }
+  }
+
+  return { saveSession, loadSession, addToHistory, subscribeToHistory, deleteFromHistory, setIsSynced }
 }
