@@ -531,7 +531,7 @@ const App = () => {
           <div className="flex items-center gap-3">
             <div className="bg-white/10 p-1.5 rounded-lg flex items-center justify-center shrink-0">
               <img 
-                src="Logo CII-05.png" 
+                src="/logo-cii.jpeg" 
                 alt="CII Logo" 
                 className="h-8 object-contain"
               />
@@ -804,7 +804,7 @@ const App = () => {
                 </div>
               </div>
               <div className="text-[10px] text-slate-600 text-center font-mono">
-                 Formula: (N / {countingMode}) � 25 � 10t � {dilutionFactor.toFixed(1)}
+                 Fórmula: (N / {countingMode}) × 25 × 10⁴ × {dilutionFactor.toFixed(1)}
               </div>
 
               {/* Boton Guardar Mejorado */}
