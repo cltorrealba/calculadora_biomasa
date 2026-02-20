@@ -3,12 +3,12 @@ import { getAuth, signInAnonymously } from 'firebase/auth'
 import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore'
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDTF5sVhvpCuv74bquuVz2FfWyRr-46XwM",
-  authDomain: "calculadora-yeast.firebaseapp.com",
-  projectId: "calculadora-yeast",
-  storageBucket: "calculadora-yeast.firebasestorage.app",
-  messagingSenderId: "108683121725",
-  appId: "1:108683121725:web:63cea1355bbb8a83858654"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 }
 
 const app = initializeApp(firebaseConfig)
