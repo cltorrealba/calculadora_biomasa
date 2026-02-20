@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Beaker, Calculator, Microscope, RotateCcw, Droplets, FlaskConical, ChevronDown, ChevronUp, Save, Settings2, Grid3x3, List, Clock, Trash2, ClipboardList, Search, CheckCircle, AlertCircle, Cloud, CloudOff } from 'lucide-react';
 import { auth, db } from './firebase';
 import { useFirestoreSync } from './hooks/useFirestoreSync';
@@ -59,10 +59,16 @@ const CountingModal = ({ activeCell, counts, updateCount, handleDirectInput, onC
         <div className="flex-1 bg-slate-900 rounded-2xl border border-green-900/50 p-4 flex flex-col items-center justify-between">
           <span className="text-green-400 font-bold uppercase tracking-wider">Celulas Vivas</span>
           <input 
-            type="number" 
+            type="number"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="off"
+            name="cell-live-count"
+            min="0"
             value={data.live === 0 ? '' : data.live} 
             placeholder="0"
             onChange={(e) => handleDirectInput(activeCell.key, 'live', e.target.value)}
+            onWheel={(e) => e.target.blur()}
             className="w-full bg-transparent text-center text-6xl font-mono text-white font-bold outline-none border-b-2 border-transparent focus:border-green-500/50 transition-all mb-2"
           />
           <div className="flex w-full gap-4">
@@ -85,10 +91,16 @@ const CountingModal = ({ activeCell, counts, updateCount, handleDirectInput, onC
         <div className="flex-1 bg-slate-900 rounded-2xl border border-red-900/50 p-4 flex flex-col items-center justify-between">
           <span className="text-red-400 font-bold uppercase tracking-wider">Celulas Muertas (Tenidas)</span>
           <input 
-            type="number" 
+            type="number"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="off"
+            name="cell-dead-count"
+            min="0"
             value={data.dead === 0 ? '' : data.dead} 
             placeholder="0"
             onChange={(e) => handleDirectInput(activeCell.key, 'dead', e.target.value)}
+            onWheel={(e) => e.target.blur()}
             className="w-full bg-transparent text-center text-6xl font-mono text-white font-bold outline-none border-b-2 border-transparent focus:border-red-500/50 transition-all mb-2"
           />
           <div className="flex w-full gap-4">
@@ -174,6 +186,7 @@ const App = () => {
   // --- Firestore ---
   const [userId, setUserId] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const { saveSession, loadSession, addToHistory, subscribeToHistory, deleteFromHistory } = useFirestoreSync(userId);
 
   // Autenticar y cargar sesión al iniciar
@@ -201,6 +214,12 @@ const App = () => {
         }
         
         setIsSyncing(false);
+        // CRITICAL: Solo habilitar sync DESPUÉS de cargar la sesión
+        // Previene que el useEffect de sync sobreescriba datos reales con defaults
+        setSessionLoaded(true);
+      } else {
+        // Usuario no autenticado aún, no sincronizar
+        setSessionLoaded(false);
       }
     });
 
@@ -216,8 +235,10 @@ const App = () => {
   }, [subscribeToHistory]);
 
   // Sincronizar cambios con Firestore en tiempo real
+  // CRITICAL: Solo sincronizar DESPUÉS de que la sesión haya sido cargada
+  // para evitar sobreescribir datos reales con valores por defecto
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !sessionLoaded) return;
 
     const syncData = async () => {
       await saveSession({
@@ -232,7 +253,7 @@ const App = () => {
 
     const timer = setTimeout(syncData, 1000);
     return () => clearTimeout(timer);
-  }, [sampleId, volumes, density, countingMode, counts, globalCounts, userId, saveSession]);
+  }, [sampleId, volumes, density, countingMode, counts, globalCounts, userId, sessionLoaded, saveSession]);
 
   // --- Calculos ---
 
@@ -342,7 +363,10 @@ const App = () => {
         }));
         return;
     }
-    const parsed = parseInt(value, 10);
+    // Sanitizar: solo permitir dígitos, rechazar texto inyectado por autocomplete
+    const sanitized = String(value).replace(/[^0-9]/g, '');
+    if (sanitized === '') return; // Ignorar input completamente no-numérico
+    const parsed = Math.max(0, parseInt(sanitized, 10));
     setCounts(prev => ({
       ...prev,
       [cellKey]: { ...prev[cellKey], [type]: isNaN(parsed) ? 0 : parsed, isCounted: true }
@@ -354,7 +378,10 @@ const App = () => {
       setGlobalCounts(prev => ({ ...prev, [type]: 0, isCounted: true }));
       return;
     }
-    const parsed = parseInt(value, 10);
+    // Sanitizar: solo permitir dígitos, rechazar texto inyectado por autocomplete
+    const sanitized = String(value).replace(/[^0-9]/g, '');
+    if (sanitized === '') return; // Ignorar input completamente no-numérico
+    const parsed = Math.max(0, parseInt(sanitized, 10));
     setGlobalCounts(prev => ({
       ...prev,
       [type]: isNaN(parsed) ? 0 : parsed,
@@ -363,7 +390,7 @@ const App = () => {
   };
 
   // Funcion silenciosa para limpiar el formulario despues de guardar
-  const clearForm = () => {
+  const clearForm = useCallback(() => {
     setCounts({
       tl: { live: 0, dead: 0, isCounted: false },
       tr: { live: 0, dead: 0, isCounted: false },
@@ -377,7 +404,7 @@ const App = () => {
     setDensity('');
     setCountingMode(5);
     setActiveCell(null);
-  };
+  }, []);
 
   // Marca el cuadro como revisado al cerrar el modal aunque no se haya presionado +-
   const closeCountingModal = () => {
@@ -578,7 +605,7 @@ const App = () => {
         
         {/* VISTA DEL CONTADOR */}
         {activeTab === 'counter' && (
-          <>
+          <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
             {/* Identificador de Muestra */}
             <section className="bg-slate-900 rounded-xl border border-slate-800 p-3 shadow-sm">
               <label className="text-xs font-bold uppercase text-slate-500 mb-1 block flex justify-between items-center">
@@ -586,7 +613,9 @@ const App = () => {
                 {saveStatus === 'error' && errorMessage === 'Falta Identificador' && <span className="text-red-400 text-[10px] flex items-center gap-1"><AlertCircle size={12}/> Campo Obligatorio</span>}
               </label>
               <input 
-                type="text" 
+                type="text"
+                autoComplete="off"
+                name="sample-identifier"
                 value={sampleId}
                 onChange={(e) => setSampleId(e.target.value)}
                 placeholder="Ej: Cuba 4, Lote A, Barrica 12..."
@@ -642,20 +671,30 @@ const App = () => {
                       <div>
                         <span className="text-xs text-slate-400 block mb-1">Muestra (mL)</span>
                         <input 
-                          type="number" 
+                          type="number"
+                          inputMode="decimal"
+                          autoComplete="off"
+                          name="vol-sample"
                           step="0.1"
+                          min="0"
                           value={volumes.sample}
                           onChange={(e) => handleVolumeChange('sample', e.target.value)}
+                          onWheel={(e) => e.target.blur()}
                           className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                         />
                       </div>
                       <div>
                         <span className="text-xs text-slate-400 block mb-1">Agua (mL)</span>
                         <input 
-                          type="number" 
+                          type="number"
+                          inputMode="decimal"
+                          autoComplete="off"
+                          name="vol-water"
                           step="0.1"
+                          min="0"
                           value={volumes.water}
                           onChange={(e) => handleVolumeChange('water', e.target.value)}
+                          onWheel={(e) => e.target.blur()}
                           className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                         />
                       </div>
@@ -671,20 +710,30 @@ const App = () => {
                       <div>
                         <span className="text-xs text-slate-400 block mb-1">Alicuota (mL)</span>
                         <input 
-                          type="number" 
+                          type="number"
+                          inputMode="decimal"
+                          autoComplete="off"
+                          name="vol-aliquot"
                           step="0.1"
+                          min="0"
                           value={volumes.aliquot}
                           onChange={(e) => handleVolumeChange('aliquot', e.target.value)}
+                          onWheel={(e) => e.target.blur()}
                           className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                         />
                       </div>
                       <div>
                         <span className="text-xs text-slate-400 block mb-1">Azul (mL)</span>
                         <input 
-                          type="number" 
+                          type="number"
+                          inputMode="decimal"
+                          autoComplete="off"
+                          name="vol-stain"
                           step="0.1"
+                          min="0"
                           value={volumes.stain}
                           onChange={(e) => handleVolumeChange('stain', e.target.value)}
+                          onWheel={(e) => e.target.blur()}
                           className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                         />
                       </div>
@@ -695,10 +744,15 @@ const App = () => {
                   <div className="space-y-2 pt-2 border-t border-slate-800">
                     <label className="text-xs font-bold uppercase text-slate-500">3. Densidad (g/mL)</label>
                     <input 
-                      type="number" 
+                      type="number"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      name="density-value"
                       step="0.1"
+                      min="0"
                       value={density}
                       onChange={(e) => setDensity(e.target.value)}
+                      onWheel={(e) => e.target.blur()}
                       placeholder="Ej: 1095.3"
                       className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                     />
@@ -785,10 +839,16 @@ const App = () => {
                     <div className="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-green-900/30">
                       <span className="text-green-400 font-bold text-lg">Vivas</span>
                       <input 
-                        type="number" 
+                        type="number"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        autoComplete="off"
+                        name="global-live-count"
+                        min="0"
                         placeholder="0"
                         value={globalCounts.live || ''}
                         onChange={(e) => handleGlobalInput('live', e.target.value)}
+                        onWheel={(e) => e.target.blur()}
                         className="bg-transparent text-right text-4xl font-mono text-white font-bold outline-none w-32 border-b border-slate-800 focus:border-green-500"
                       />
                     </div>
@@ -796,10 +856,16 @@ const App = () => {
                     <div className="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-red-900/30">
                       <span className="text-red-400 font-bold text-lg">Muertas</span>
                       <input 
-                        type="number" 
+                        type="number"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        autoComplete="off"
+                        name="global-dead-count"
+                        min="0"
                         placeholder="0"
                         value={globalCounts.dead || ''}
                         onChange={(e) => handleGlobalInput('dead', e.target.value)}
+                        onWheel={(e) => e.target.blur()}
                         className="bg-transparent text-right text-4xl font-mono text-white font-bold outline-none w-32 border-b border-slate-800 focus:border-red-500"
                       />
                     </div>
@@ -866,7 +932,7 @@ const App = () => {
                 )}
               </button>
             </section>
-          </>
+          </form>
         )}
 
         {/* VISTA DEL HISTORIAL */}
@@ -877,7 +943,9 @@ const App = () => {
             <div className="bg-slate-900 p-3 rounded-xl border border-slate-800 shadow-sm flex items-center gap-2">
               <Search className="text-slate-500" size={18} />
               <input 
-                type="text" 
+                type="text"
+                autoComplete="off"
+                name="history-search"
                 placeholder="Buscar por ID o Fecha..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}

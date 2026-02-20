@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { db } from '../firebase'
 import { doc, setDoc, getDoc, onSnapshot, collection, query, orderBy, deleteDoc } from 'firebase/firestore'
 
@@ -49,8 +49,8 @@ export const useFirestoreSync = (userId) => {
     }
   }
 
-  // Suscribirse a la colección global
-  const subscribeToHistory = (callback) => {
+  // Suscribirse a la colección global (memoizado para evitar re-suscripciones)
+  const subscribeToHistory = useCallback((callback) => {
     const q = query(collection(db, GLOBAL_HISTORY_COLLECTION), orderBy('createdAt', 'desc'))
     
     return onSnapshot(
@@ -64,7 +64,7 @@ export const useFirestoreSync = (userId) => {
       },
       (error) => console.error('Error en listener de historial:', error)
     )
-  }
+  }, [])
 
   // Eliminar registro del historial
   const deleteFromHistory = async (recordId) => {
