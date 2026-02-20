@@ -136,13 +136,15 @@ const App = () => {
   // Historial (cargado desde Firestore)
   const [history, setHistory] = useState([]);
 
-  // Configuracion de Dilucion (Volumenes en mL)
+  // Configuracion de Dilucion (Volumenes en mL) y densidad
   const [volumes, setVolumes] = useState({
     sample: 1,
     water: 9,
     aliquot: 1,
     stain: 1
   });
+  
+  const [density, setDensity] = useState(1095); // Densidad puede ser float o int
 
   // Modo de conteo: 5 cuadros (Standard Z) o 13 cuadros (Baja densidad)
   const [countingMode, setCountingMode] = useState(5);
@@ -186,6 +188,7 @@ const App = () => {
         if (savedSession) {
           setSampleId(savedSession.sampleId || '');
           setVolumes(savedSession.volumes || { sample: 1, water: 9, aliquot: 1, stain: 1 });
+          setDensity(savedSession.density || 1095);
           setCountingMode(savedSession.countingMode || 5);
           setCounts(savedSession.counts || {
             tl: { live: 0, dead: 0, isCounted: false },
@@ -220,6 +223,7 @@ const App = () => {
       await saveSession({
         sampleId,
         volumes,
+        density,
         countingMode,
         counts,
         globalCounts
@@ -228,7 +232,7 @@ const App = () => {
 
     const timer = setTimeout(syncData, 1000);
     return () => clearTimeout(timer);
-  }, [sampleId, volumes, countingMode, counts, globalCounts, userId, saveSession]);
+  }, [sampleId, volumes, density, countingMode, counts, globalCounts, userId, saveSession]);
 
   // --- Calculos ---
 
@@ -370,6 +374,7 @@ const App = () => {
     setGlobalCounts({ live: 0, dead: 0, isCounted: false });
     setSampleId('');
     setVolumes({ sample: 1, water: 9, aliquot: 1, stain: 1 });
+    setDensity(1095);
     setCountingMode(5);
     setActiveCell(null);
   };
@@ -441,6 +446,7 @@ const App = () => {
       sampleId,
       mode: countingMode,
       volumes: { ...volumes },
+      density: density,
       totals: { ...totals },
       results: { ...results },
       dilutionFactor
@@ -684,6 +690,20 @@ const App = () => {
                       </div>
                     </div>
                   </div>
+                  
+                  {/* Densidad */}
+                  <div className="space-y-2 pt-2 border-t border-slate-800">
+                    <label className="text-xs font-bold uppercase text-slate-500">3. Densidad (g/mL)</label>
+                    <input 
+                      type="number" 
+                      step="0.1"
+                      value={density}
+                      onChange={(e) => setDensity(parseFloat(e.target.value) || 0)}
+                      placeholder="1095.3"
+                      className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
+                    />
+                    <p className="text-[10px] text-slate-600 text-center">Acepta valores enteros o decimales</p>
+                  </div>
                 </div>
               )}
             </section>
@@ -916,6 +936,12 @@ const App = () => {
                       <span className="text-[10px] text-slate-500 block uppercase">Conteo Real</span>
                       <span className="font-mono text-slate-300">V:{record.totals.live} | M:{record.totals.dead}</span>
                     </div>
+                    {record.density && (
+                      <div className="bg-slate-950 p-2 rounded border border-slate-800/50 col-span-2">
+                        <span className="text-[10px] text-slate-500 block uppercase">Densidad</span>
+                        <span className="font-mono text-slate-300">{record.density} g/mL</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))
