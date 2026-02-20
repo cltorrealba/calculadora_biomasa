@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Beaker, Calculator, Microscope, RotateCcw, Droplets, FlaskConical, ChevronDown, ChevronUp, Save, Settings2, Grid3x3, List, Clock, Trash2, ClipboardList, Search, CheckCircle, AlertCircle, Cloud, CloudOff } from 'lucide-react';
 import { auth, db } from './firebase';
 import { useFirestoreSync } from './hooks/useFirestoreSync';
+import pkg from '../package.json';
 
 // --- Componentes UI Extraidos ---
 
@@ -59,11 +60,11 @@ const CountingModal = ({ activeCell, counts, updateCount, handleDirectInput, onC
         <div className="flex-1 bg-slate-900 rounded-2xl border border-green-900/50 p-4 flex flex-col items-center justify-between">
           <span className="text-green-400 font-bold uppercase tracking-wider">Celulas Vivas</span>
           <input 
-            type="number"
+            type="text"
             inputMode="numeric"
             pattern="[0-9]*"
-            autoComplete="off"
-            name="cell-live-count"
+            autoComplete="one-time-code"
+            name={`live-${activeCell.key}-${Date.now()}`}
             min="0"
             value={data.live === 0 ? '' : data.live} 
             placeholder="0"
@@ -91,11 +92,11 @@ const CountingModal = ({ activeCell, counts, updateCount, handleDirectInput, onC
         <div className="flex-1 bg-slate-900 rounded-2xl border border-red-900/50 p-4 flex flex-col items-center justify-between">
           <span className="text-red-400 font-bold uppercase tracking-wider">Celulas Muertas (Tenidas)</span>
           <input 
-            type="number"
+            type="text"
             inputMode="numeric"
             pattern="[0-9]*"
-            autoComplete="off"
-            name="cell-dead-count"
+            autoComplete="one-time-code"
+            name={`dead-${activeCell.key}-${Date.now()}`}
             min="0"
             value={data.dead === 0 ? '' : data.dead} 
             placeholder="0"
@@ -125,7 +126,46 @@ const CountingModal = ({ activeCell, counts, updateCount, handleDirectInput, onC
 };
 
 
+// Helper: Sanitizar datos de sesión de Firestore
+// Firestore puede devolver strings en vez de numbers (originados de input values),
+// lo que corrompe operaciones aritméticas: "5" + "0" = "50", no 5.
+const sanitizeNumber = (val, fallback = 0) => {
+  const n = Number(val);
+  return isNaN(n) ? fallback : n;
+};
+
+const sanitizeCellData = (cell) => ({
+  live: sanitizeNumber(cell?.live, 0),
+  dead: sanitizeNumber(cell?.dead, 0),
+  isCounted: Boolean(cell?.isCounted)
+});
+
+const sanitizeSession = (session) => {
+  if (!session) return null;
+  return {
+    sampleId: session.sampleId || '',
+    density: session.density !== undefined && session.density !== '' ? String(session.density) : '',
+    countingMode: sanitizeNumber(session.countingMode, 5),
+    volumes: {
+      sample: sanitizeNumber(session.volumes?.sample, 1),
+      water: sanitizeNumber(session.volumes?.water, 9),
+      aliquot: sanitizeNumber(session.volumes?.aliquot, 1),
+      stain: sanitizeNumber(session.volumes?.stain, 1),
+    },
+    counts: {
+      tl: sanitizeCellData(session.counts?.tl),
+      tr: sanitizeCellData(session.counts?.tr),
+      c: sanitizeCellData(session.counts?.c),
+      bl: sanitizeCellData(session.counts?.bl),
+      br: sanitizeCellData(session.counts?.br),
+    },
+    globalCounts: sanitizeCellData(session.globalCounts),
+  };
+};
+
 // --- App Principal ---
+
+const appVersion = pkg.version;
 
 const App = () => {
   // --- Estados Primero ---
@@ -196,21 +236,16 @@ const App = () => {
         setUserId(user.uid);
         setIsSyncing(true);
         
-        // Cargar sesión guardada
-        const savedSession = await loadSession();
+        // Cargar sesión guardada y SANITIZAR tipos
+        const rawSession = await loadSession();
+        const savedSession = sanitizeSession(rawSession);
         if (savedSession) {
-          setSampleId(savedSession.sampleId || '');
-          setVolumes(savedSession.volumes || { sample: 1, water: 9, aliquot: 1, stain: 1 });
-          setDensity(savedSession.density || '');
-          setCountingMode(savedSession.countingMode || 5);
-          setCounts(savedSession.counts || {
-            tl: { live: 0, dead: 0, isCounted: false },
-            tr: { live: 0, dead: 0, isCounted: false },
-            c: { live: 0, dead: 0, isCounted: false },
-            bl: { live: 0, dead: 0, isCounted: false },
-            br: { live: 0, dead: 0, isCounted: false }
-          });
-          setGlobalCounts(savedSession.globalCounts || { live: 0, dead: 0, isCounted: false });
+          setSampleId(savedSession.sampleId);
+          setVolumes(savedSession.volumes);
+          setDensity(savedSession.density);
+          setCountingMode(savedSession.countingMode);
+          setCounts(savedSession.counts);
+          setGlobalCounts(savedSession.globalCounts);
         }
         
         setIsSyncing(false);
@@ -241,13 +276,25 @@ const App = () => {
     if (!userId || !sessionLoaded) return;
 
     const syncData = async () => {
+      // Sanitizar antes de guardar para nunca escribir strings como números
       await saveSession({
         sampleId,
-        volumes,
+        volumes: {
+          sample: sanitizeNumber(volumes.sample, 1),
+          water: sanitizeNumber(volumes.water, 9),
+          aliquot: sanitizeNumber(volumes.aliquot, 1),
+          stain: sanitizeNumber(volumes.stain, 1),
+        },
         density,
         countingMode,
-        counts,
-        globalCounts
+        counts: {
+          tl: sanitizeCellData(counts.tl),
+          tr: sanitizeCellData(counts.tr),
+          c: sanitizeCellData(counts.c),
+          bl: sanitizeCellData(counts.bl),
+          br: sanitizeCellData(counts.br),
+        },
+        globalCounts: sanitizeCellData(globalCounts),
       });
     };
 
@@ -258,10 +305,10 @@ const App = () => {
   // --- Calculos ---
 
   const dilutionFactor = useMemo(() => {
-    const vSample = parseFloat(volumes.sample) || 0;
-    const vWater = parseFloat(volumes.water) || 0;
-    const vAliquot = parseFloat(volumes.aliquot) || 0;
-    const vStain = parseFloat(volumes.stain) || 0;
+    const vSample = Number(volumes.sample) || 0;
+    const vWater = Number(volumes.water) || 0;
+    const vAliquot = Number(volumes.aliquot) || 0;
+    const vStain = Number(volumes.stain) || 0;
 
     if (vSample === 0 || vAliquot === 0) return 1;
 
@@ -275,20 +322,18 @@ const App = () => {
     return df1 * df2;
   }, [volumes]);
 
-  // Totales unificados segun el modo
+  // Totales unificados segun el modo (con coercion defensiva a Number)
   const totals = useMemo(() => {
     if (countingMode === 5) {
       const cells = Object.values(counts);
-      const totalLive = cells.reduce((acc, curr) => acc + curr.live, 0);
-      const totalDead = cells.reduce((acc, curr) => acc + curr.dead, 0);
+      const totalLive = cells.reduce((acc, curr) => acc + Number(curr.live || 0), 0);
+      const totalDead = cells.reduce((acc, curr) => acc + Number(curr.dead || 0), 0);
       return { live: totalLive, dead: totalDead, all: totalLive + totalDead };
     } else {
       // Modo 13 cuadros
-      return { 
-        live: globalCounts.live, 
-        dead: globalCounts.dead, 
-        all: globalCounts.live + globalCounts.dead 
-      };
+      const live = Number(globalCounts.live) || 0;
+      const dead = Number(globalCounts.dead) || 0;
+      return { live, dead, all: live + dead };
     }
   }, [counts, globalCounts, countingMode]);
 
@@ -331,7 +376,17 @@ const App = () => {
   // --- Manejadores ---
 
   const handleVolumeChange = (field, value) => {
-    setVolumes(prev => ({ ...prev, [field]: value }));
+    // Permitir string vacío y valores numéricos decimales válidos
+    if (value === '' || value === '.') {
+      setVolumes(prev => ({ ...prev, [field]: value }));
+      return;
+    }
+    // Sanitizar: solo permitir dígitos y un punto decimal
+    const sanitized = value.replace(/[^0-9.]/g, '');
+    // Evitar múltiples puntos
+    const parts = sanitized.split('.');
+    const clean = parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : sanitized;
+    setVolumes(prev => ({ ...prev, [field]: clean }));
   };
 
   const applyPreset = (type) => {
@@ -441,9 +496,11 @@ const App = () => {
         : (!globalCounts.isCounted ? 13 : 0);
 
     // Jerarquia de validaciones
+    const vSample = Number(volumes.sample);
+    const vAliquot = Number(volumes.aliquot);
     if (!sampleId.trim()) {
       msg = "Falta ingresar el Identificador de Muestra.";
-    } else if (!volumes.sample || volumes.sample <= 0 || !volumes.aliquot || volumes.aliquot <= 0) {
+    } else if (!vSample || vSample <= 0 || !vAliquot || vAliquot <= 0) {
       msg = "Revisa los volumenes ingresados. No pueden estar vacios o en cero.";
     } else if (uncountedSquares > 0) {
       if (countingMode === 5) {
@@ -472,7 +529,12 @@ const App = () => {
       timestamp: new Date().toLocaleString(),
       sampleId,
       mode: countingMode,
-      volumes: { ...volumes },
+      volumes: {
+        sample: sanitizeNumber(volumes.sample, 1),
+        water: sanitizeNumber(volumes.water, 0),
+        aliquot: sanitizeNumber(volumes.aliquot, 1),
+        stain: sanitizeNumber(volumes.stain, 0),
+      },
       ...(density && { density: parseFloat(density) }),
       totals: { ...totals },
       results: { ...results },
@@ -590,6 +652,7 @@ const App = () => {
             <div className="flex flex-col">
               <h1 className="text-sm font-bold text-white leading-tight">Laboratorio de Microbiologia</h1>
               <span className="text-[10px] text-indigo-200 font-medium leading-tight max-w-[200px]">By Centro de Investigacion e Innovacion Vina Concha y Toro</span>
+              <span className="text-[10px] text-indigo-300/80 font-mono leading-tight">v{appVersion}</span>
             </div>
           </div>
           
@@ -606,6 +669,12 @@ const App = () => {
         {/* VISTA DEL CONTADOR */}
         {activeTab === 'counter' && (
           <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
+            {/* Campos señuelo ocultos para confundir el autocomplete de Chrome */}
+            <div style={{ position: 'absolute', left: '-9999px', opacity: 0, height: 0, overflow: 'hidden' }} aria-hidden="true">
+              <input type="text" name="fake-name" tabIndex={-1} />
+              <input type="text" name="fake-email" tabIndex={-1} />
+              <input type="password" name="fake-pass" tabIndex={-1} />
+            </div>
             {/* Identificador de Muestra */}
             <section className="bg-slate-900 rounded-xl border border-slate-800 p-3 shadow-sm">
               <label className="text-xs font-bold uppercase text-slate-500 mb-1 block flex justify-between items-center">
@@ -614,8 +683,9 @@ const App = () => {
               </label>
               <input 
                 type="text"
-                autoComplete="off"
+                autoComplete="one-time-code"
                 name="sample-identifier"
+                id="sample-id-field"
                 value={sampleId}
                 onChange={(e) => setSampleId(e.target.value)}
                 placeholder="Ej: Cuba 4, Lote A, Barrica 12..."
@@ -671,30 +741,26 @@ const App = () => {
                       <div>
                         <span className="text-xs text-slate-400 block mb-1">Muestra (mL)</span>
                         <input 
-                          type="number"
+                          type="text"
                           inputMode="decimal"
-                          autoComplete="off"
+                          autoComplete="one-time-code"
                           name="vol-sample"
-                          step="0.1"
-                          min="0"
                           value={volumes.sample}
                           onChange={(e) => handleVolumeChange('sample', e.target.value)}
-                          onWheel={(e) => e.target.blur()}
+                          onFocus={(e) => { if (e.target.value === '0') e.target.select(); }}
                           className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                         />
                       </div>
                       <div>
                         <span className="text-xs text-slate-400 block mb-1">Agua (mL)</span>
                         <input 
-                          type="number"
+                          type="text"
                           inputMode="decimal"
-                          autoComplete="off"
+                          autoComplete="one-time-code"
                           name="vol-water"
-                          step="0.1"
-                          min="0"
                           value={volumes.water}
                           onChange={(e) => handleVolumeChange('water', e.target.value)}
-                          onWheel={(e) => e.target.blur()}
+                          onFocus={(e) => { if (e.target.value === '0') e.target.select(); }}
                           className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                         />
                       </div>
@@ -710,30 +776,26 @@ const App = () => {
                       <div>
                         <span className="text-xs text-slate-400 block mb-1">Alicuota (mL)</span>
                         <input 
-                          type="number"
+                          type="text"
                           inputMode="decimal"
-                          autoComplete="off"
+                          autoComplete="one-time-code"
                           name="vol-aliquot"
-                          step="0.1"
-                          min="0"
                           value={volumes.aliquot}
                           onChange={(e) => handleVolumeChange('aliquot', e.target.value)}
-                          onWheel={(e) => e.target.blur()}
+                          onFocus={(e) => { if (e.target.value === '0') e.target.select(); }}
                           className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                         />
                       </div>
                       <div>
                         <span className="text-xs text-slate-400 block mb-1">Azul (mL)</span>
                         <input 
-                          type="number"
+                          type="text"
                           inputMode="decimal"
-                          autoComplete="off"
+                          autoComplete="one-time-code"
                           name="vol-stain"
-                          step="0.1"
-                          min="0"
                           value={volumes.stain}
                           onChange={(e) => handleVolumeChange('stain', e.target.value)}
-                          onWheel={(e) => e.target.blur()}
+                          onFocus={(e) => { if (e.target.value === '0') e.target.select(); }}
                           className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                         />
                       </div>
@@ -744,15 +806,12 @@ const App = () => {
                   <div className="space-y-2 pt-2 border-t border-slate-800">
                     <label className="text-xs font-bold uppercase text-slate-500">3. Densidad (g/mL)</label>
                     <input 
-                      type="number"
+                      type="text"
                       inputMode="decimal"
-                      autoComplete="off"
+                      autoComplete="one-time-code"
                       name="density-value"
-                      step="0.1"
-                      min="0"
                       value={density}
                       onChange={(e) => setDensity(e.target.value)}
-                      onWheel={(e) => e.target.blur()}
                       placeholder="Ej: 1095.3"
                       className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                     />
@@ -839,16 +898,14 @@ const App = () => {
                     <div className="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-green-900/30">
                       <span className="text-green-400 font-bold text-lg">Vivas</span>
                       <input 
-                        type="number"
+                        type="text"
                         inputMode="numeric"
                         pattern="[0-9]*"
-                        autoComplete="off"
+                        autoComplete="one-time-code"
                         name="global-live-count"
-                        min="0"
                         placeholder="0"
                         value={globalCounts.live || ''}
                         onChange={(e) => handleGlobalInput('live', e.target.value)}
-                        onWheel={(e) => e.target.blur()}
                         className="bg-transparent text-right text-4xl font-mono text-white font-bold outline-none w-32 border-b border-slate-800 focus:border-green-500"
                       />
                     </div>
@@ -856,16 +913,14 @@ const App = () => {
                     <div className="flex items-center justify-between bg-slate-950 p-4 rounded-lg border border-red-900/30">
                       <span className="text-red-400 font-bold text-lg">Muertas</span>
                       <input 
-                        type="number"
+                        type="text"
                         inputMode="numeric"
                         pattern="[0-9]*"
-                        autoComplete="off"
+                        autoComplete="one-time-code"
                         name="global-dead-count"
-                        min="0"
                         placeholder="0"
                         value={globalCounts.dead || ''}
                         onChange={(e) => handleGlobalInput('dead', e.target.value)}
-                        onWheel={(e) => e.target.blur()}
                         className="bg-transparent text-right text-4xl font-mono text-white font-bold outline-none w-32 border-b border-slate-800 focus:border-red-500"
                       />
                     </div>
@@ -944,7 +999,7 @@ const App = () => {
               <Search className="text-slate-500" size={18} />
               <input 
                 type="text"
-                autoComplete="off"
+                autoComplete="one-time-code"
                 name="history-search"
                 placeholder="Buscar por ID o Fecha..."
                 value={searchTerm}
