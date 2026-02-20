@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth, signInAnonymously } from 'firebase/auth'
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore'
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -13,16 +13,21 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig)
 const auth = getAuth(app)
-const db = getFirestore(app)
 
-// Habilitar persistencia offline
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code === 'failed-precondition') {
-    console.log('Múltiples pestañas abiertas; persistencia deshabilitada.')
-  } else if (err.code === 'unimplemented') {
-    console.log('Navegador no soporta persistencia offline.')
-  }
-})
+// Usar la nueva API de persistencia (reemplaza enableIndexedDbPersistence deprecado)
+// Soporta múltiples pestañas sin conflictos
+let db
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    })
+  })
+} catch (err) {
+  // Fallback: si ya fue inicializado o persistencia no disponible
+  db = getFirestore(app)
+  console.warn('Usando Firestore sin persistencia mejorada:', err.message)
+}
 
 // Autenticación anónima
 signInAnonymously(auth).catch((error) => {
