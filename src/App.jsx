@@ -144,7 +144,7 @@ const App = () => {
     stain: 1
   });
   
-  const [density, setDensity] = useState(1095); // Densidad puede ser float o int
+  const [density, setDensity] = useState(''); // Densidad opcional (float o int)
 
   // Modo de conteo: 5 cuadros (Standard Z) o 13 cuadros (Baja densidad)
   const [countingMode, setCountingMode] = useState(5);
@@ -188,7 +188,7 @@ const App = () => {
         if (savedSession) {
           setSampleId(savedSession.sampleId || '');
           setVolumes(savedSession.volumes || { sample: 1, water: 9, aliquot: 1, stain: 1 });
-          setDensity(savedSession.density || 1095);
+          setDensity(savedSession.density || '');
           setCountingMode(savedSession.countingMode || 5);
           setCounts(savedSession.counts || {
             tl: { live: 0, dead: 0, isCounted: false },
@@ -374,7 +374,7 @@ const App = () => {
     setGlobalCounts({ live: 0, dead: 0, isCounted: false });
     setSampleId('');
     setVolumes({ sample: 1, water: 9, aliquot: 1, stain: 1 });
-    setDensity(1095);
+    setDensity('');
     setCountingMode(5);
     setActiveCell(null);
   };
@@ -446,7 +446,7 @@ const App = () => {
       sampleId,
       mode: countingMode,
       volumes: { ...volumes },
-      density: density,
+      ...(density && { density: parseFloat(density) }),
       totals: { ...totals },
       results: { ...results },
       dilutionFactor
@@ -698,11 +698,11 @@ const App = () => {
                       type="number" 
                       step="0.1"
                       value={density}
-                      onChange={(e) => setDensity(parseFloat(e.target.value) || 0)}
-                      placeholder="1095.3"
+                      onChange={(e) => setDensity(e.target.value)}
+                      placeholder="Ej: 1095.3"
                       className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
                     />
-                    <p className="text-[10px] text-slate-600 text-center">Acepta valores enteros o decimales</p>
+                    <p className="text-[10px] text-slate-600 text-center">Opcional - Acepta valores enteros o decimales</p>
                   </div>
                 </div>
               )}
