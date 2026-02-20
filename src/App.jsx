@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Beaker, Calculator, Microscope, RotateCcw, Droplets, FlaskConical, ChevronDown, ChevronUp, Save, Settings2, Grid3x3, List, Clock, Trash2, ClipboardList, Search, CheckCircle, AlertCircle } from 'lucide-react';
+import { Beaker, Calculator, Microscope, RotateCcw, Droplets, FlaskConical, ChevronDown, ChevronUp, Save, Settings2, Grid3x3, List, Clock, Trash2, ClipboardList, Search, CheckCircle, AlertCircle, Cloud, CloudOff } from 'lucide-react';
+import { auth, db } from './firebase';
+import { useFirestoreSync } from './hooks/useFirestoreSync';
 
 // --- Componentes UI Extraidos ---
 
 const GridCell = ({ label, data, active, onClick }) => {
   const total = data ? data.live + data.dead : 0;
+  const isCounted = data ? data.isCounted : false;
   
   const baseClasses = "relative rounded-lg flex flex-col items-center justify-center p-2 transition-all duration-200 border-2";
   const activeClasses = "bg-slate-800 border-indigo-500 hover:bg-slate-700 cursor-pointer shadow-lg active:scale-95";
@@ -17,7 +20,7 @@ const GridCell = ({ label, data, active, onClick }) => {
   return (
     <div onClick={onClick} className={`${baseClasses} ${activeClasses}`}>
       <span className="text-xs font-bold text-slate-400 absolute top-1 left-2">{label}</span>
-      {total > 0 ? (
+      {isCounted ? (
         <div className="flex flex-col items-center">
           <span className="text-2xl font-bold text-white">{total}</span>
           <div className="flex gap-1 mt-1">
@@ -113,10 +116,63 @@ const CountingModal = ({ activeCell, counts, updateCount, handleDirectInput, onC
 // --- App Principal ---
 
 const App = () => {
+  // --- Firestore ---
+  const [userId, setUserId] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const { saveSession, loadSession, addToHistory } = useFirestoreSync(userId);
+
+  // Autenticar y cargar sesión al iniciar
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        setUserId(user.uid);
+        setIsSyncing(true);
+        
+        // Cargar sesión guardada
+        const savedSession = await loadSession();
+        if (savedSession) {
+          setSampleId(savedSession.sampleId || '');
+          setVolumes(savedSession.volumes || { sample: 1, water: 9, aliquot: 1, stain: 1 });
+          setCountingMode(savedSession.countingMode || 5);
+          setCounts(savedSession.counts || {
+            tl: { live: 0, dead: 0, isCounted: false },
+            tr: { live: 0, dead: 0, isCounted: false },
+            c: { live: 0, dead: 0, isCounted: false },
+            bl: { live: 0, dead: 0, isCounted: false },
+            br: { live: 0, dead: 0, isCounted: false }
+          });
+          setGlobalCounts(savedSession.globalCounts || { live: 0, dead: 0, isCounted: false });
+        }
+        
+        setIsSyncing(false);
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
+  // Sincronizar cambios con Firestore en tiempo real
+  useEffect(() => {
+    if (!userId) return;
+
+    const syncData = async () => {
+      await saveSession({
+        sampleId,
+        volumes,
+        countingMode,
+        counts,
+        globalCounts
+      });
+    };
+
+    const timer = setTimeout(syncData, 1000); // Sincronizar después de 1 segundo de inactividad
+    return () => clearTimeout(timer);
+  }, [sampleId, volumes, countingMode, counts, globalCounts, userId, saveSession]);
+
   // --- Estados ---
   
-  // Modal de confirmacion
-  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', onConfirm: null });
+  // Modal de confirmacion (con soporte para modo Alerta)
+  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', onConfirm: null, isAlert: false });
   
   // Identificador de muestra
   const [sampleId, setSampleId] = useState('');
@@ -150,17 +206,18 @@ const App = () => {
 
   // Estado del conteo DETALLADO (para modo 5 cuadros)
   const [counts, setCounts] = useState({
-    tl: { live: 0, dead: 0 },
-    tr: { live: 0, dead: 0 },
-    c:  { live: 0, dead: 0 },
-    bl: { live: 0, dead: 0 },
-    br: { live: 0, dead: 0 },
+    tl: { live: 0, dead: 0, isCounted: false },
+    tr: { live: 0, dead: 0, isCounted: false },
+    c:  { live: 0, dead: 0, isCounted: false },
+    bl: { live: 0, dead: 0, isCounted: false },
+    br: { live: 0, dead: 0, isCounted: false },
   });
 
   // Estado del conteo GLOBAL (para modo 13 cuadros)
   const [globalCounts, setGlobalCounts] = useState({
     live: 0, 
-    dead: 0 
+    dead: 0,
+    isCounted: false
   });
 
   // Estado para el modal de conteo
@@ -269,7 +326,7 @@ const App = () => {
       const newVal = Math.max(0, currentVal + delta);
       return {
         ...prev,
-        [cellKey]: { ...prev[cellKey], [type]: newVal }
+        [cellKey]: { ...prev[cellKey], [type]: newVal, isCounted: true }
       };
     });
   };
@@ -278,43 +335,55 @@ const App = () => {
     if (value === '') {
         setCounts(prev => ({
             ...prev,
-            [cellKey]: { ...prev[cellKey], [type]: 0 }
+            [cellKey]: { ...prev[cellKey], [type]: 0, isCounted: true }
         }));
         return;
     }
     const parsed = parseInt(value, 10);
     setCounts(prev => ({
       ...prev,
-      [cellKey]: { ...prev[cellKey], [type]: isNaN(parsed) ? 0 : parsed }
+      [cellKey]: { ...prev[cellKey], [type]: isNaN(parsed) ? 0 : parsed, isCounted: true }
     }));
   };
 
   const handleGlobalInput = (type, value) => {
     if (value === '') {
-      setGlobalCounts(prev => ({ ...prev, [type]: 0 }));
+      setGlobalCounts(prev => ({ ...prev, [type]: 0, isCounted: true }));
       return;
     }
     const parsed = parseInt(value, 10);
     setGlobalCounts(prev => ({
       ...prev,
-      [type]: isNaN(parsed) ? 0 : parsed
+      [type]: isNaN(parsed) ? 0 : parsed,
+      isCounted: true
     }));
   };
 
   // Funcion silenciosa para limpiar el formulario despues de guardar
   const clearForm = () => {
     setCounts({
-      tl: { live: 0, dead: 0 },
-      tr: { live: 0, dead: 0 },
-      c:  { live: 0, dead: 0 },
-      bl: { live: 0, dead: 0 },
-      br: { live: 0, dead: 0 },
+      tl: { live: 0, dead: 0, isCounted: false },
+      tr: { live: 0, dead: 0, isCounted: false },
+      c:  { live: 0, dead: 0, isCounted: false },
+      bl: { live: 0, dead: 0, isCounted: false },
+      br: { live: 0, dead: 0, isCounted: false },
     });
-    setGlobalCounts({ live: 0, dead: 0 });
+    setGlobalCounts({ live: 0, dead: 0, isCounted: false });
     setSampleId('');
     setVolumes({ sample: 1, water: 9, aliquot: 1, stain: 1 });
     setCountingMode(5);
     setActiveCell(null);
+  };
+
+  // Marca el cuadro como revisado al cerrar el modal aunque no se haya presionado +-
+  const closeCountingModal = () => {
+    if (activeCell) {
+      setCounts(prev => ({
+        ...prev,
+        [activeCell.key]: { ...prev[activeCell.key], isCounted: true }
+      }));
+      setActiveCell(null);
+    }
   };
 
   // Funcion atada al boton superior "Nueva Muestra"
@@ -323,8 +392,9 @@ const App = () => {
     if (hasPartialData) {
       setConfirmDialog({
         isOpen: true,
-        message: "�Hay datos sin guardar. Deseas reiniciar el formulario y perder los datos actuales?",
-        onConfirm: () => clearForm()
+        message: "Hay datos sin guardar. Deseas reiniciar el formulario y perder los datos actuales?",
+        onConfirm: () => clearForm(),
+        isAlert: false
       });
       return;
     }
@@ -332,17 +402,35 @@ const App = () => {
   };
 
   const saveToHistory = () => {
-    // Validacion de Identificador
-    if (!sampleId.trim()) {
-      setErrorMessage('Falta Identificador');
-      setSaveStatus('error');
-      setTimeout(() => setSaveStatus('idle'), 2500);
-      return;
-    }
+    let msg = "";
     
-    // Validacion de volumenes requeridos (evitar divisiones por 0 y calculos erroneos)
-    if (!volumes.sample || volumes.sample <= 0 || !volumes.aliquot || volumes.aliquot <= 0) {
-      setErrorMessage('Revisa Volumenes');
+    // Verificamos si los cuadros requeridos fueron revisados
+    const uncountedSquares = countingMode === 5 
+        ? Object.values(counts).filter(c => !c.isCounted).length 
+        : (!globalCounts.isCounted ? 13 : 0);
+
+    // Jerarquia de validaciones
+    if (!sampleId.trim()) {
+      msg = "Falta ingresar el Identificador de Muestra.";
+    } else if (!volumes.sample || volumes.sample <= 0 || !volumes.aliquot || volumes.aliquot <= 0) {
+      msg = "Revisa los volumenes ingresados. No pueden estar vacios o en cero.";
+    } else if (uncountedSquares > 0) {
+      if (countingMode === 5) {
+        msg = `Aun faltan ${uncountedSquares} cuadro(s) por revisar en la camara.`;
+      } else {
+        msg = "Falta ingresar el conteo total de celulas.";
+      }
+    }
+
+    if (msg !== "") {
+      setConfirmDialog({
+        isOpen: true,
+        message: msg + " Por favor, completa toda la informacion requerida previo a guardar.",
+        onConfirm: null,
+        isAlert: true
+      });
+      
+      setErrorMessage(msg.split('.')[0]);
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 2500);
       return;
@@ -361,19 +449,33 @@ const App = () => {
 
     setHistory([newRecord, ...history]);
     
-    // Feedback visual
+    // Guardar en Firestore también
+    if (userId) {
+      addToHistory(newRecord);
+    }
+    
     setSaveStatus('saved');
     setTimeout(() => {
       setSaveStatus('idle');
-      clearForm(); // Limpiamos automaticamente para la siguiente muestra
+      clearForm();
     }, 2000);
   };
 
   const deleteRecord = (id) => {
     setConfirmDialog({
       isOpen: true,
-      message: "�Eliminar este registro permanentemente?",
-      onConfirm: () => setHistory(prev => prev.filter(record => record.id !== id))
+      message: "Eliminar este registro permanentemente?",
+      onConfirm: () => setHistory(prev => prev.filter(record => record.id !== id)),
+      isAlert: false
+    });
+  };
+
+  const clearHistory = () => {
+    setConfirmDialog({
+      isOpen: true,
+      message: "Estas seguro de borrar TODO el historial? Esta accion no se puede deshacer.",
+      onConfirm: () => setHistory([]),
+      isAlert: false
     });
   };
 
@@ -385,21 +487,32 @@ const App = () => {
           <div className="bg-slate-900 border border-slate-700 p-6 rounded-xl w-full max-w-sm shadow-2xl">
             <p className="text-white mb-6 text-center font-medium">{confirmDialog.message}</p>
             <div className="flex gap-4">
-              <button 
-                onClick={() => setConfirmDialog({ isOpen: false, message: '', onConfirm: null })} 
-                className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={() => { 
-                  if (confirmDialog.onConfirm) confirmDialog.onConfirm(); 
-                  setConfirmDialog({ isOpen: false, message: '', onConfirm: null }); 
-                }} 
-                className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-bold"
-              >
-                Confirmar
-              </button>
+              {confirmDialog.isAlert ? (
+                <button 
+                  onClick={() => setConfirmDialog({ isOpen: false, message: '', onConfirm: null, isAlert: false })} 
+                  className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-bold"
+                >
+                  Entendido
+                </button>
+              ) : (
+                <>
+                  <button 
+                    onClick={() => setConfirmDialog({ isOpen: false, message: '', onConfirm: null, isAlert: false })} 
+                    className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={() => { 
+                      if (confirmDialog.onConfirm) confirmDialog.onConfirm(); 
+                      setConfirmDialog({ isOpen: false, message: '', onConfirm: null, isAlert: false }); 
+                    }} 
+                    className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-bold"
+                  >
+                    Confirmar
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -410,7 +523,7 @@ const App = () => {
         counts={counts}
         updateCount={updateCount}
         handleDirectInput={handleDirectInput}
-        onClose={() => setActiveCell(null)}
+        onClose={closeCountingModal}
       />
 
       {/* Header Actualizado */}
@@ -426,7 +539,7 @@ const App = () => {
             </div>
             <div className="flex flex-col">
               <h1 className="text-sm font-bold text-white leading-tight">Laboratorio de Microbiologia</h1>
-              <span className="text-[10px] text-indigo-200 font-medium leading-tight max-w-[200px]">By Centro de Investigaci�n e Innovaci�n Vi�a Concha y Toro</span>
+              <span className="text-[10px] text-indigo-200 font-medium leading-tight max-w-[200px]">By Centro de Investigacion e Innovacion Vina Concha y Toro</span>
             </div>
           </div>
           
