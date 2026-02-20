@@ -116,6 +116,62 @@ const CountingModal = ({ activeCell, counts, updateCount, handleDirectInput, onC
 // --- App Principal ---
 
 const App = () => {
+  // --- Estados Primero ---
+  // Modal de confirmacion (con soporte para modo Alerta)
+  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', onConfirm: null, isAlert: false });
+  
+  // Identificador de muestra
+  const [sampleId, setSampleId] = useState('');
+  
+  // Pestanas (Tabs)
+  const [activeTab, setActiveTab] = useState('counter'); // 'counter' o 'history'
+  
+  // Estado para busqueda en historial
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // Estado visual del boton de guardado ('idle', 'error', 'saved')
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // Historial
+  const [history, setHistory] = useState(() => {
+    const saved = localStorage.getItem('yeastHistory');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  // Configuracion de Dilucion (Volumenes en mL)
+  const [volumes, setVolumes] = useState({
+    sample: 1,
+    water: 9,
+    aliquot: 1,
+    stain: 1
+  });
+
+  // Modo de conteo: 5 cuadros (Standard Z) o 13 cuadros (Baja densidad)
+  const [countingMode, setCountingMode] = useState(5);
+
+  // Estado del conteo DETALLADO (para modo 5 cuadros)
+  const [counts, setCounts] = useState({
+    tl: { live: 0, dead: 0, isCounted: false },
+    tr: { live: 0, dead: 0, isCounted: false },
+    c:  { live: 0, dead: 0, isCounted: false },
+    bl: { live: 0, dead: 0, isCounted: false },
+    br: { live: 0, dead: 0, isCounted: false },
+  });
+
+  // Estado del conteo GLOBAL (para modo 13 cuadros)
+  const [globalCounts, setGlobalCounts] = useState({
+    live: 0, 
+    dead: 0,
+    isCounted: false
+  });
+
+  // Estado para el modal de conteo
+  const [activeCell, setActiveCell] = useState(null);
+  
+  // Estado para colapsar seccion de dilucion
+  const [showDilution, setShowDilution] = useState(true);
+
   // --- Firestore ---
   const [userId, setUserId] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -165,66 +221,9 @@ const App = () => {
       });
     };
 
-    const timer = setTimeout(syncData, 1000); // Sincronizar después de 1 segundo de inactividad
+    const timer = setTimeout(syncData, 1000);
     return () => clearTimeout(timer);
   }, [sampleId, volumes, countingMode, counts, globalCounts, userId, saveSession]);
-
-  // --- Estados ---
-  
-  // Modal de confirmacion (con soporte para modo Alerta)
-  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', onConfirm: null, isAlert: false });
-  
-  // Identificador de muestra
-  const [sampleId, setSampleId] = useState('');
-  
-  // Pestanas (Tabs)
-  const [activeTab, setActiveTab] = useState('counter'); // 'counter' o 'history'
-  
-  // Estado para busqueda en historial
-  const [searchTerm, setSearchTerm] = useState('');
-  
-  // Estado visual del boton de guardado ('idle', 'error', 'saved')
-  const [saveStatus, setSaveStatus] = useState('idle');
-  const [errorMessage, setErrorMessage] = useState('');
-
-  // Historial
-  const [history, setHistory] = useState(() => {
-    const saved = localStorage.getItem('yeastHistory');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  // Configuracion de Dilucion (Volumenes en mL)
-  const [volumes, setVolumes] = useState({
-    sample: 1,      // Volumen de muestra inicial
-    water: 9,       // Volumen de agua/buffer anadido (Default Cuba 1:10)
-    aliquot: 1,     // Volumen de la dilucion tomado para tenir
-    stain: 1        // Volumen de tincion anadido
-  });
-
-  // Modo de conteo: 5 cuadros (Standard Z) o 13 cuadros (Baja densidad)
-  const [countingMode, setCountingMode] = useState(5); // 5 or 13
-
-  // Estado del conteo DETALLADO (para modo 5 cuadros)
-  const [counts, setCounts] = useState({
-    tl: { live: 0, dead: 0, isCounted: false },
-    tr: { live: 0, dead: 0, isCounted: false },
-    c:  { live: 0, dead: 0, isCounted: false },
-    bl: { live: 0, dead: 0, isCounted: false },
-    br: { live: 0, dead: 0, isCounted: false },
-  });
-
-  // Estado del conteo GLOBAL (para modo 13 cuadros)
-  const [globalCounts, setGlobalCounts] = useState({
-    live: 0, 
-    dead: 0,
-    isCounted: false
-  });
-
-  // Estado para el modal de conteo
-  const [activeCell, setActiveCell] = useState(null);
-  
-  // Estado para colapsar seccion de dilucion
-  const [showDilution, setShowDilution] = useState(true);
 
   // Guardar historial en localStorage
   useEffect(() => {
