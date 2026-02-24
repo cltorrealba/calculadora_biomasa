@@ -145,6 +145,7 @@ const sanitizeSession = (session) => {
   return {
     sampleId: session.sampleId || '',
     density: session.density !== undefined && session.density !== '' ? String(session.density) : '',
+    temperature: session.temperature !== undefined && session.temperature !== '' ? String(session.temperature) : '',
     countingMode: sanitizeNumber(session.countingMode, 5),
     volumes: {
       sample: sanitizeNumber(session.volumes?.sample, 1),
@@ -188,7 +189,7 @@ const App = () => {
   // Historial (cargado desde Firestore)
   const [history, setHistory] = useState([]);
 
-  // Configuracion de Dilucion (Volumenes en mL) y densidad
+  // Configuracion de Dilucion (Volumenes en mL), densidad y temperatura
   const [volumes, setVolumes] = useState({
     sample: 1,
     water: 9,
@@ -197,6 +198,7 @@ const App = () => {
   });
   
   const [density, setDensity] = useState(''); // Densidad opcional (float o int)
+  const [temperature, setTemperature] = useState(''); // Temperatura opcional (float o int)
 
   // Modo de conteo: 5 cuadros (Standard Z) o 13 cuadros (Baja densidad)
   const [countingMode, setCountingMode] = useState(5);
@@ -243,6 +245,7 @@ const App = () => {
           setSampleId(savedSession.sampleId);
           setVolumes(savedSession.volumes);
           setDensity(savedSession.density);
+          setTemperature(savedSession.temperature);
           setCountingMode(savedSession.countingMode);
           setCounts(savedSession.counts);
           setGlobalCounts(savedSession.globalCounts);
@@ -286,6 +289,7 @@ const App = () => {
           stain: sanitizeNumber(volumes.stain, 1),
         },
         density,
+        temperature,
         countingMode,
         counts: {
           tl: sanitizeCellData(counts.tl),
@@ -300,7 +304,7 @@ const App = () => {
 
     const timer = setTimeout(syncData, 1000);
     return () => clearTimeout(timer);
-  }, [sampleId, volumes, density, countingMode, counts, globalCounts, userId, sessionLoaded, saveSession]);
+  }, [sampleId, volumes, density, temperature, countingMode, counts, globalCounts, userId, sessionLoaded, saveSession]);
 
   // --- Calculos ---
 
@@ -457,6 +461,7 @@ const App = () => {
     setSampleId('');
     setVolumes({ sample: 1, water: 9, aliquot: 1, stain: 1 });
     setDensity('');
+    setTemperature('');
     setCountingMode(5);
     setActiveCell(null);
   }, []);
@@ -536,6 +541,7 @@ const App = () => {
         stain: sanitizeNumber(volumes.stain, 0),
       },
       ...(density && { density: parseFloat(density) }),
+      ...(temperature && { temperature: parseFloat(temperature) }),
       totals: { ...totals },
       results: { ...results },
       dilutionFactor
@@ -817,6 +823,22 @@ const App = () => {
                     />
                     <p className="text-[10px] text-slate-600 text-center">Opcional - Acepta valores enteros o decimales</p>
                   </div>
+
+                  {/* Temperatura */}
+                  <div className="space-y-2 pt-2 border-t border-slate-800">
+                    <label className="text-xs font-bold uppercase text-slate-500">4. Temperatura (C)</label>
+                    <input 
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="one-time-code"
+                      name="temperature-value"
+                      value={temperature}
+                      onChange={(e) => setTemperature(e.target.value)}
+                      placeholder="Ej: 28.5"
+                      className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-center text-white focus:border-indigo-500 outline-none"
+                    />
+                    <p className="text-[10px] text-slate-600 text-center">Opcional - Acepta valores enteros o decimales</p>
+                  </div>
                 </div>
               )}
             </section>
@@ -1063,6 +1085,12 @@ const App = () => {
                       <div className="bg-slate-950 p-2 rounded border border-slate-800/50 col-span-2">
                         <span className="text-[10px] text-slate-500 block uppercase">Densidad</span>
                         <span className="font-mono text-slate-300">{record.density} g/mL</span>
+                      </div>
+                    )}
+                    {record.temperature !== undefined && record.temperature !== null && record.temperature !== '' && (
+                      <div className="bg-slate-950 p-2 rounded border border-slate-800/50 col-span-2">
+                        <span className="text-[10px] text-slate-500 block uppercase">Temperatura</span>
+                        <span className="font-mono text-slate-300">{record.temperature} C</span>
                       </div>
                     )}
                   </div>
