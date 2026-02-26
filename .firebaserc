@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "calculadora-yeast"
-  }
+  },
+  "targets": {
+    "calculadora-yeast": {
+      "hosting": {
+        "production": [
+          "calculadora-yeast"
+        ],
+        "staging": [
+          "calculadora-yeast-staging"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
