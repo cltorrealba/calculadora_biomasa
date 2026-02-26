@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Beaker, Calculator, Microscope, RotateCcw, Droplets, FlaskConical, ChevronDown, ChevronUp, Save, Settings2, Grid3x3, List, Clock, Trash2, ClipboardList, Search, CheckCircle, AlertCircle, Cloud, CloudOff } from 'lucide-react';
-import { auth, db } from './firebase';
+import { auth } from './firebase';
 import { useFirestoreSync } from './hooks/useFirestoreSync';
 import pkg from '../package.json';
 

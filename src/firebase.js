@@ -1,6 +1,12 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth, signInAnonymously } from 'firebase/auth'
-import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore'
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager
+} from 'firebase/firestore'
+import { appEnvironment, firestoreNamespace } from './lib/environment'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -14,8 +20,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig)
 const auth = getAuth(app)
 
-// Usar la nueva API de persistencia (reemplaza enableIndexedDbPersistence deprecado)
-// Soporta múltiples pestañas sin conflictos
 let db
 try {
   db = initializeFirestore(app, {
@@ -24,14 +28,30 @@ try {
     })
   })
 } catch (err) {
-  // Fallback: si ya fue inicializado o persistencia no disponible
   db = getFirestore(app)
-  console.warn('Usando Firestore sin persistencia mejorada:', err.message)
+  console.warn('Using Firestore without enhanced persistence:', err.message)
 }
 
-// Autenticación anónima
 signInAnonymously(auth).catch((error) => {
-  console.error('Error en autenticación:', error)
+  console.error('Authentication error:', error)
 })
 
-export { auth, db }
+const FIRESTORE_ROOT_SEGMENTS = ['environments', firestoreNamespace]
+
+const buildNamespacedSegments = (...segments) => [
+  ...FIRESTORE_ROOT_SEGMENTS,
+  ...segments
+]
+
+if (import.meta.env.DEV) {
+  console.info('[firebase] environment:', appEnvironment, '| namespace:', firestoreNamespace)
+}
+
+export {
+  auth,
+  db,
+  appEnvironment,
+  firestoreNamespace,
+  FIRESTORE_ROOT_SEGMENTS,
+  buildNamespacedSegments
+}

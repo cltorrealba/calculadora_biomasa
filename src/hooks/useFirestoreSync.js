@@ -1,81 +1,85 @@
 import { useState, useCallback } from 'react'
-import { db } from '../firebase'
+import { db, buildNamespacedSegments } from '../firebase'
 import { doc, setDoc, getDoc, onSnapshot, collection, query, orderBy, deleteDoc } from 'firebase/firestore'
 
 const SESSION_DOC = 'current-session'
-const GLOBAL_HISTORY_COLLECTION = 'shared-history' // Colección global compartida
+const GLOBAL_HISTORY_COLLECTION = 'shared-history'
+const historyCollectionPath = buildNamespacedSegments(GLOBAL_HISTORY_COLLECTION)
 
-// Hook para sincronizar estado con Firestore
+const getUserSessionPath = (userId) => (
+  buildNamespacedSegments('users', userId, 'sessions', SESSION_DOC)
+)
+
 export const useFirestoreSync = (userId) => {
   const [isSynced, setIsSynced] = useState(false)
 
   const saveSession = async (sessionData) => {
     try {
       if (!userId) return
-      const docRef = doc(db, 'users', userId, 'sessions', SESSION_DOC)
+      const docRef = doc(db, ...getUserSessionPath(userId))
       await setDoc(docRef, {
         ...sessionData,
         lastUpdated: new Date().toISOString()
       }, { merge: true })
     } catch (error) {
-      console.error('Error guardando sesión:', error)
+      console.error('Error saving session:', error)
     }
   }
 
   const loadSession = async () => {
     try {
       if (!userId) return null
-      const docRef = doc(db, 'users', userId, 'sessions', SESSION_DOC)
+      const docRef = doc(db, ...getUserSessionPath(userId))
       const docSnap = await getDoc(docRef)
       return docSnap.exists() ? docSnap.data() : null
     } catch (error) {
-      console.error('Error cargando sesión:', error)
+      console.error('Error loading session:', error)
       return null
     }
   }
 
-  // Guardar en colección global compartida
   const addToHistory = async (record) => {
     try {
-      const historyRef = doc(db, GLOBAL_HISTORY_COLLECTION, record.id.toString())
+      const historyRef = doc(db, ...historyCollectionPath, record.id.toString())
       await setDoc(historyRef, {
         ...record,
         createdAt: new Date().toISOString()
       })
       return true
     } catch (error) {
-      console.error('Error agregando al historial:', error)
+      console.error('Error adding history record:', error)
       throw error
     }
   }
 
-  // Suscribirse a la colección global (memoizado para evitar re-suscripciones)
   const subscribeToHistory = useCallback((callback) => {
-    const q = query(collection(db, GLOBAL_HISTORY_COLLECTION), orderBy('createdAt', 'desc'))
-    
+    const q = query(
+      collection(db, ...historyCollectionPath),
+      orderBy('createdAt', 'desc')
+    )
+
     return onSnapshot(
       q,
       (snapshot) => {
-        const history = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
+        const history = snapshot.docs.map((historyDoc) => ({
+          id: historyDoc.id,
+          ...historyDoc.data()
         }))
         callback(history)
       },
-      (error) => console.error('Error en listener de historial:', error)
+      (error) => console.error('Error listening to history:', error)
     )
   }, [])
 
-  // Eliminar registro del historial
   const deleteFromHistory = async (recordId) => {
     try {
-      await deleteDoc(doc(db, GLOBAL_HISTORY_COLLECTION, recordId.toString()))
+      await deleteDoc(doc(db, ...historyCollectionPath, recordId.toString()))
       return true
     } catch (error) {
-      console.error('Error eliminando registro:', error)
+      console.error('Error deleting history record:', error)
       throw error
     }
   }
 
-  return { saveSession, loadSession, addToHistory, subscribeToHistory, deleteFromHistory, setIsSynced }
+  return { saveSession, loadSession, addToHistory, subscribeToHistory, deleteFromHistory, setIsSynced, isSynced }
 }
